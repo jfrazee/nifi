@@ -210,6 +210,45 @@ public class TestCompressContent {
     }
 
     @Test
+    public void testGzipDecompressWithMimeTypes() throws Exception {
+        final TestRunner runner = TestRunners.newTestRunner(CompressContent.class);
+        runner.setProperty(CompressContent.MODE, "decompress");
+        runner.setProperty(CompressContent.COMPRESSION_FORMAT, CompressContent.COMPRESSION_FORMAT_ATTRIBUTE);
+        assertTrue(runner.setProperty(CompressContent.UPDATE_FILENAME, "true").isValid());
+
+        final List<String> mimeTypes = new ArrayList<String>();
+        mimeTypes.put("application/gzip");
+        mimeTypes.put("application/gzip-compressed");
+        mimeTypes.put("application/x-gzip");
+        mimeTypes.put("application/x-gzip-compressed");
+        mimeTypes.put("application/gzipped");
+
+        for (final String mimeType : mimeTypes) {
+          final Map<String, String> attributes = new HashMap<>();
+          attributes.put("mime.type", mimeType);
+          runner.enqueue(Paths.get("src/test/resources/CompressedData/SampleFile.txt.gz"), attributes);
+          runner.run();
+
+          runner.assertAllFlowFilesTransferred(CompressContent.REL_SUCCESS, 1);
+          MockFlowFile flowFile = runner.getFlowFilesForRelationship(CompressContent.REL_SUCCESS).get(0);
+          flowFile.assertContentEquals(Paths.get("src/test/resources/CompressedData/SampleFile.txt"));
+          flowFile.assertAttributeEquals("filename", "SampleFile.txt");
+
+          runner.clearTransferState();
+        }
+
+        final Map<String, String> attributes = new HashMap<>();
+        attributes.put("mime.type", "application/x-gzippy-zip");
+        runner.enqueue(Paths.get("src/test/resources/CompressedData/SampleFile.txt.gz"), attributes);
+        runner.run();
+
+        runner.assertAllFlowFilesTransferred(CompressContent.REL_SUCCESS, 1);
+        MockFlowFile flowFile = runner.getFlowFilesForRelationship(CompressContent.REL_SUCCESS).get(0);
+        flowFile.assertContentEquals(Paths.get("src/test/resources/CompressedData/SampleFile.txt.gz"));
+        flowFile.assertAttributeEquals("filename", "SampleFile.txt.gz");
+    }
+
+    @Test
     public void testFilenameUpdatedOnCompress() throws IOException {
         final TestRunner runner = TestRunners.newTestRunner(CompressContent.class);
         runner.setProperty(CompressContent.MODE, "compress");

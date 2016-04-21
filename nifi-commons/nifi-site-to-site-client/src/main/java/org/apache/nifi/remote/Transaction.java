@@ -79,12 +79,32 @@ import org.apache.nifi.remote.protocol.DataPacket;
 public interface Transaction {
 
     /**
+     * Sends information to the remote NiFi instance with a maximum rate.
+     *
+     * @param dataPacket the data packet to send
+     * @param rate the number of bytes per second to send
+     * @throws IOException if unable to send
+     */
+    void send(DataPacket dataPacket, long rate) throws IOException;
+
+    /**
      * Sends information to the remote NiFi instance.
      *
      * @param dataPacket the data packet to send
      * @throws IOException if unable to send
      */
     void send(DataPacket dataPacket) throws IOException;
+
+    /**
+     * Sends the given byte array as the content of a {@link DataPacket} along
+     * with the provided attributes
+     *
+     * @param content to send
+     * @param attributes of the content
+     * @param rate the number of bytes per second to send     
+     * @throws IOException if unable to send
+     */
+    void send(byte[] content, Map<String, String> attributes, long rate) throws IOException;
 
     /**
      * Sends the given byte array as the content of a {@link DataPacket} along

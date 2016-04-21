@@ -67,6 +67,7 @@ public class NiFiProperties extends Properties {
     public static final String REMOTE_INPUT_HOST = "nifi.remote.input.socket.host";
     public static final String REMOTE_INPUT_PORT = "nifi.remote.input.socket.port";
     public static final String SITE_TO_SITE_SECURE = "nifi.remote.input.secure";
+    public static final String SITE_TO_SITE_THROTTLE = "nifi.remote.output.throttle";
     public static final String TEMPLATE_DIRECTORY = "nifi.templates.directory";
     public static final String ADMINISTRATIVE_YIELD_DURATION = "nifi.administrative.yield.duration";
     public static final String PERSISTENT_STATE_DIRECTORY = "nifi.persistent.state.directory";
@@ -429,6 +430,16 @@ public class NiFiProperties extends Properties {
             return true;
         }
 
+    }
+
+    /**
+     * The maximum bytes per second to write to a Remote Input Port.
+     *
+     * @return the maximum bytes per second
+     */
+    public long getSiteToSiteThrottle() {
+        final String value = getProperty(SITE_TO_SITE_THROTTLE);
+        return StringUtils.isBlank(value) ? 0 : Long.parseLong(value);
     }
 
     /**

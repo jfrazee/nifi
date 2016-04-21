@@ -27,6 +27,7 @@ import java.util.zip.CRC32;
 import java.util.zip.CheckedInputStream;
 import java.util.zip.CheckedOutputStream;
 
+import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.events.EventReporter;
 import org.apache.nifi.remote.Communicant;
 import org.apache.nifi.remote.Peer;
@@ -40,6 +41,7 @@ import org.apache.nifi.remote.io.CompressionOutputStream;
 import org.apache.nifi.remote.protocol.DataPacket;
 import org.apache.nifi.remote.protocol.RequestType;
 import org.apache.nifi.remote.util.StandardDataPacket;
+import org.apache.nifi.remote.util.ThrottledOutputStream;
 import org.apache.nifi.reporting.Severity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,6 +62,8 @@ public class SocketClientTransaction implements Transaction {
     private final int penaltyMillis;
     private final String destinationId;
     private final EventReporter eventReporter;
+    private final NiFiProperties properties = NiFiProperties.getInstance();
+    private final long siteToSiteThrottle = properties.getSiteToSiteThrottle();
 
     private boolean dataAvailable = false;
     private int transfers = 0;
@@ -178,12 +182,17 @@ public class SocketClientTransaction implements Transaction {
     }
 
     @Override
-    public void send(final byte[] content, final Map<String, String> attributes) throws IOException {
-        send(new StandardDataPacket(attributes, new ByteArrayInputStream(content), content.length));
+    public void send(final byte[] content, final Map<String, String> attributes, final long rate) throws IOException {
+        send(new StandardDataPacket(attributes, new ByteArrayInputStream(content), content.length), rate);
     }
 
     @Override
-    public void send(final DataPacket dataPacket) throws IOException {
+    public void send(final byte[] content, final Map<String, String> attributes) throws IOException {
+        send(content, attributes, siteToSiteThrottle);
+    }
+
+    @Override
+    public void send(final DataPacket dataPacket, final long rate) throws IOException {
         try {
             try {
                 if (state != TransactionState.DATA_EXCHANGED && state != TransactionState.TRANSACTION_STARTED) {
@@ -200,8 +209,17 @@ public class SocketClientTransaction implements Transaction {
 
                 logger.debug("{} Sending data to {}", this, peer);
 
-                final OutputStream dataOut = compress ? new CompressionOutputStream(dos) : dos;
-                final OutputStream out = new CheckedOutputStream(dataOut, crc);
+                OutputStream out = dos;
+
+                ThrottledOutputStream throttled = null;
+                if (rate > 0) {
+                    throttled = new ThrottledOutputStream(dos, rate);
+                    out = throttled;
+                }
+
+                out = compress ? new CompressionOutputStream(out) : out;
+                out = new CheckedOutputStream(out, crc);
+
                 codec.encode(dataPacket, out);
 
                 // need to close the CompressionOutputStream in order to force it write out any remaining bytes.
@@ -214,6 +232,14 @@ public class SocketClientTransaction implements Transaction {
                 transfers++;
                 contentBytes += dataPacket.getSize();
                 this.state = TransactionState.DATA_EXCHANGED;
+
+                if (rate > 0 && throttled != null) {
+                    try {
+                        final long bytesPerSecond = throttled.getBytesPerSecond();
+                        logger.info("Current transfer rate is {} B/s", bytesPerSecond);
+                    }
+                    catch (final Exception e) { }
+                }
             } catch (final IOException ioe) {
                 throw new IOException("Failed to send data to " + peer + " due to " + ioe, ioe);
             }
@@ -221,6 +247,11 @@ public class SocketClientTransaction implements Transaction {
             error();
             throw e;
         }
+    }
+
+    @Override
+    public void send(final DataPacket dataPacket) throws IOException {
+      send(dataPacket, siteToSiteThrottle);
     }
 
     @Override

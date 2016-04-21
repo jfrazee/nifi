@@ -189,8 +189,18 @@ public class SocketClient implements SiteToSiteClient {
             }
 
             @Override
+            public void send(final DataPacket dataPacket, final long rate) throws IOException {
+                transaction.send(dataPacket, rate);
+            }
+
+            @Override
             public void send(final DataPacket dataPacket) throws IOException {
                 transaction.send(dataPacket);
+            }
+
+            @Override
+            public void send(final byte[] content, final Map<String, String> attributes, final long rate) throws IOException {
+                transaction.send(content, attributes, rate);
             }
 
             @Override

@@ -18,6 +18,7 @@ package org.apache.nifi.hbase;
 
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.nifi.annotation.behavior.EventDriven;
 import org.apache.nifi.annotation.behavior.InputRequirement;
 import org.apache.nifi.annotation.behavior.SupportsBatching;
@@ -138,7 +139,8 @@ public class PutHBaseJSON extends AbstractPutHBase {
     @Override
     protected PutFlowFile createPut(final ProcessSession session, final ProcessContext context, final FlowFile flowFile) {
         final String tableName = context.getProperty(TABLE_NAME).evaluateAttributeExpressions(flowFile).getValue();
-        final String rowId = context.getProperty(ROW_ID).evaluateAttributeExpressions(flowFile).getValue();
+//        final String rowId = context.getProperty(ROW_ID).evaluateAttributeExpressions(flowFile).getValue();
+        final byte[] rowId = context.getProperty(ROW_ID).evaluateAttributeExpressions(flowFile).getValue().getBytes(StandardCharsets.UTF_8);
         final String rowFieldName = context.getProperty(ROW_FIELD_NAME).evaluateAttributeExpressions(flowFile).getValue();
         final String columnFamily = context.getProperty(COLUMN_FAMILY).evaluateAttributeExpressions(flowFile).getValue();
         final boolean extractRowId = !StringUtils.isBlank(rowFieldName);
@@ -169,19 +171,23 @@ public class PutHBaseJSON extends AbstractPutHBase {
         }
 
         final Collection<PutColumn> columns = new ArrayList<>();
-        final ObjectHolder<String> rowIdHolder = new ObjectHolder<>(null);
+//        final ObjectHolder<String> rowIdHolder = new ObjectHolder<>(null);
+        byte[] rowIdHolder = new byte[0];
+        
 
         // convert each field/value to a column for the put, skip over nulls and arrays
         final Iterator<String> fieldNames = rootNode.getFieldNames();
         while (fieldNames.hasNext()) {
             final String fieldName = fieldNames.next();
-            final ObjectHolder<String> fieldValueHolder = new ObjectHolder<>(null);
+            byte[] res = new byte[0];
+//            final ObjectHolder<String> fieldValueHolder = new ObjectHolder<>(null);
 
             final JsonNode fieldNode = rootNode.get(fieldName);
             if (fieldNode.isNull()) {
                 getLogger().debug("Skipping {} because value was null", new Object[]{fieldName});
             } else if (fieldNode.isValueNode()) {
-                fieldValueHolder.set(fieldNode.asText());
+            	res = this.extractJNodeValue(fieldNode);
+//                fieldValueHolder.set(fieldNode.asText());
             } else {
                 // for non-null, non-value nodes, determine what to do based on the handling strategy
                 switch (complexFieldStrategy) {
@@ -194,7 +200,8 @@ public class PutHBaseJSON extends AbstractPutHBase {
                     case TEXT_VALUE:
                         // use toString() here because asText() is only guaranteed to be supported on value nodes
                         // some other types of nodes, like ArrayNode, provide toString implementations
-                        fieldValueHolder.set(fieldNode.toString());
+//                        fieldValueHolder.set(fieldNode.toString());
+                        res = this.extractJNodeValue(fieldNode);
                         break;
                     case IGNORE_VALUE:
                         // silently skip
@@ -206,25 +213,48 @@ public class PutHBaseJSON extends AbstractPutHBase {
 
             // if we have a field value, then see if this is the row id field, if so store the value for later
             // otherwise add a new column where the fieldName and fieldValue are the column qualifier and value
-            if (fieldValueHolder.get() != null) {
+            if (res.length > 0) {
                 if (extractRowId && fieldName.equals(rowFieldName)) {
-                    rowIdHolder.set(fieldValueHolder.get());
+//                    rowIdHolder.set(fieldValueHolder.get());
+                	rowIdHolder = res;
                 } else {
-                    columns.add(new PutColumn(columnFamily, fieldName, fieldValueHolder.get().getBytes(StandardCharsets.UTF_8)));
+                    columns.add(new PutColumn(columnFamily, fieldName, res));
                 }
             }
         }
 
         // if we are expecting a field name to use for the row id and the incoming document doesn't have it
         // log an error message so the user can see what the field names were and return null so it gets routed to failure
-        if (extractRowId && rowIdHolder.get() == null) {
+        if (extractRowId && rowIdHolder.length > 0) {
             final String fieldNameStr = StringUtils.join(rootNode.getFieldNames(), ",");
             getLogger().error("Row ID field named '{}' not found in field names '{}'; routing to failure", new Object[] {rowFieldName, fieldNameStr});
             return null;
         }
 
-        final String putRowId = (extractRowId ? rowIdHolder.get() : rowId);
+        final byte[] putRowId = (extractRowId ? rowIdHolder : rowId);
         return new PutFlowFile(tableName, putRowId, columns, flowFile);
+    }
+    
+    
+    /*
+     *Handles the conversion of the JsonNode value into it correct underlying data type in the form of a byte array as expected by the columns.add function 
+     */
+    private byte[] extractJNodeValue(JsonNode n){
+    	if (n.isBoolean()){
+    		//boolean
+    		return Bytes.toBytes(n.asBoolean());
+    	}else if(n.isNumber()){
+    		if(n.isIntegralNumber()){
+    			//interpret as Long
+    			return Bytes.toBytes(n.asLong());
+    		}else{
+    			//interpret as Double
+    			return Bytes.toBytes(n.asDouble());
+    		}
+    	}else{
+    		//if all else fails, interpret as String
+    		return Bytes.toBytes(n.asText());
+    	}
     }
 
 }

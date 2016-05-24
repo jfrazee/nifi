@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.hbase;
 
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.nifi.hbase.put.PutFlowFile;
 import org.apache.nifi.provenance.ProvenanceEventRecord;
 import org.apache.nifi.provenance.ProvenanceEventType;
@@ -87,10 +88,10 @@ public class TestPutHBaseJSON {
         final List<PutFlowFile> puts = hBaseClient.getFlowFilePuts().get(DEFAULT_TABLE_NAME);
         assertEquals(1, puts.size());
 
-        final Map<String,String> expectedColumns = new HashMap<>();
-        expectedColumns.put("field1", "value1");
-        expectedColumns.put("field2", "value2");
-        HBaseTestUtil.verifyPut(DEFAULT_ROW, DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
+        final Map<String,byte[]> expectedColumns = new HashMap<>();
+        expectedColumns.put("field1", Bytes.toBytes("value1"));
+        expectedColumns.put("field2", Bytes.toBytes("value2"));
+        HBaseTestUtil.verifyPut(Bytes.toBytes(DEFAULT_ROW), DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
 
         final List<ProvenanceEventRecord> events = runner.getProvenanceEvents();
         assertEquals(1, events.size());
@@ -120,10 +121,10 @@ public class TestPutHBaseJSON {
         assertEquals(1, puts.size());
 
         // should be a put with row id of myRowId, and rowField shouldn't end up in the columns
-        final Map<String,String> expectedColumns1 = new HashMap<>();
-        expectedColumns1.put("field1", "value1");
-        expectedColumns1.put("field2", "value2");
-        HBaseTestUtil.verifyPut("myRowId", DEFAULT_COLUMN_FAMILY, expectedColumns1, puts);
+        final Map<String,byte[]> expectedColumns1 = new HashMap<>();
+        expectedColumns1.put("field1", Bytes.toBytes("value1"));
+        expectedColumns1.put("field2", Bytes.toBytes("value2"));
+        HBaseTestUtil.verifyPut(Bytes.toBytes("myRowId"), DEFAULT_COLUMN_FAMILY, expectedColumns1, puts);
 
         final List<ProvenanceEventRecord> events = runner.getProvenanceEvents();
         assertEquals(1, events.size());
@@ -200,14 +201,16 @@ public class TestPutHBaseJSON {
         final List<PutFlowFile> puts = hBaseClient.getFlowFilePuts().get("myTable");
         assertEquals(1, puts.size());
 
-        final Map<String,String> expectedColumns = new HashMap<>();
-        expectedColumns.put("field1", "value1");
-        expectedColumns.put("field2", "value2");
-        HBaseTestUtil.verifyPut("myRowId", "myColFamily", expectedColumns, puts);
+        final Map<String,byte[]> expectedColumns = new HashMap<>();
+        expectedColumns.put("field1", Bytes.toBytes("value1"));
+        expectedColumns.put("field2", Bytes.toBytes("value2"));
+        
+        byte[] rowId = Bytes.toBytes("myRowId");
+        HBaseTestUtil.verifyPut(rowId, "myColFamily", expectedColumns, puts);
 
         final List<ProvenanceEventRecord> events = runner.getProvenanceEvents();
         assertEquals(1, events.size());
-        HBaseTestUtil.verifyEvent(runner.getProvenanceEvents(), "hbase://myTable/myRowId", ProvenanceEventType.SEND);
+        HBaseTestUtil.verifyEvent(runner.getProvenanceEvents(), "hbase://myTable/".concat(rowId.toString()), ProvenanceEventType.SEND);
     }
 
     @Test
@@ -235,9 +238,9 @@ public class TestPutHBaseJSON {
         final List<PutFlowFile> puts = hBaseClient.getFlowFilePuts().get("myTable");
         assertEquals(1, puts.size());
 
-        final Map<String,String> expectedColumns = new HashMap<>();
-        expectedColumns.put("field2", "value2");
-        HBaseTestUtil.verifyPut("value1", "myColFamily", expectedColumns, puts);
+        final Map<String,byte[]> expectedColumns = new HashMap<>();
+        expectedColumns.put("field2", Bytes.toBytes("value2"));
+        HBaseTestUtil.verifyPut(Bytes.toBytes("value1"), "myColFamily", expectedColumns, puts);
 
         final List<ProvenanceEventRecord> events = runner.getProvenanceEvents();
         assertEquals(1, events.size());
@@ -264,9 +267,9 @@ public class TestPutHBaseJSON {
         assertEquals(1, puts.size());
 
         // should have skipped field1 and field3
-        final Map<String,String> expectedColumns = new HashMap<>();
-        expectedColumns.put("field2", "value2");
-        HBaseTestUtil.verifyPut(DEFAULT_ROW, DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
+        final Map<String,byte[]> expectedColumns = new HashMap<>();
+        expectedColumns.put("field2", Bytes.toBytes("value2"));
+        HBaseTestUtil.verifyPut(Bytes.toBytes(DEFAULT_ROW), DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
     }
 
     @Test
@@ -289,9 +292,9 @@ public class TestPutHBaseJSON {
         assertEquals(1, puts.size());
 
         // should have skipped field1 and field3
-        final Map<String,String> expectedColumns = new HashMap<>();
-        expectedColumns.put("field2", "value2");
-        HBaseTestUtil.verifyPut(DEFAULT_ROW, DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
+        final Map<String,byte[]> expectedColumns = new HashMap<>();
+        expectedColumns.put("field2", Bytes.toBytes("value2"));
+        HBaseTestUtil.verifyPut(Bytes.toBytes(DEFAULT_ROW), DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
     }
 
     @Test
@@ -337,10 +340,10 @@ public class TestPutHBaseJSON {
         assertEquals(1, puts.size());
 
         // should have skipped field1 and field3
-        final Map<String,String> expectedColumns = new HashMap<>();
-        expectedColumns.put("field1", "[{\"child_field1\":\"child_value1\"}]");
-        expectedColumns.put("field2", "value2");
-        HBaseTestUtil.verifyPut(DEFAULT_ROW, DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
+        final Map<String,byte[]> expectedColumns = new HashMap<>();
+        expectedColumns.put("field1", Bytes.toBytes("[{\"child_field1\":\"child_value1\"}]"));
+        expectedColumns.put("field2", Bytes.toBytes("value2"));
+        HBaseTestUtil.verifyPut(Bytes.toBytes(DEFAULT_ROW), DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
     }
 
     @Test
@@ -363,10 +366,10 @@ public class TestPutHBaseJSON {
         assertEquals(1, puts.size());
 
         // should have skipped field1 and field3
-        final Map<String,String> expectedColumns = new HashMap<>();
-        expectedColumns.put("field1", "{\"child_field1\":\"child_value1\"}");
-        expectedColumns.put("field2", "value2");
-        HBaseTestUtil.verifyPut(DEFAULT_ROW, DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
+        final Map<String,byte[]> expectedColumns = new HashMap<>();
+        expectedColumns.put("field1", Bytes.toBytes("{\"child_field1\":\"child_value1\"}"));
+        expectedColumns.put("field2", Bytes.toBytes("value2"));
+        HBaseTestUtil.verifyPut(Bytes.toBytes(DEFAULT_ROW), DEFAULT_COLUMN_FAMILY, expectedColumns, puts);
     }
 
     @Test

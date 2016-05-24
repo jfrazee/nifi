@@ -266,11 +266,12 @@ public class HBase_1_1_2_ClientService extends AbstractControllerService impleme
     public void put(final String tableName, final Collection<PutFlowFile> puts) throws IOException {
         try (final Table table = connection.getTable(TableName.valueOf(tableName))) {
             // Create one Put per row....
-            final Map<String, Put> rowPuts = new HashMap<>();
+            final Map<byte[], Put> rowPuts = new HashMap<>();
             for (final PutFlowFile putFlowFile : puts) {
                 Put put = rowPuts.get(putFlowFile.getRow());
                 if (put == null) {
-                    put = new Put(putFlowFile.getRow().getBytes(StandardCharsets.UTF_8));
+//                    put = new Put(putFlowFile.getRow().getBytes(StandardCharsets.UTF_8));
+                	put = new Put(putFlowFile.getRow());
                     rowPuts.put(putFlowFile.getRow(), put);
                 }
 

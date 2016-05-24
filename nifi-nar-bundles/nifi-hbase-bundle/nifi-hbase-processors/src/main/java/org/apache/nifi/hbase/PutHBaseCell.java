@@ -33,6 +33,7 @@ import org.apache.nifi.stream.io.StreamUtils;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -70,7 +71,7 @@ public class PutHBaseCell extends AbstractPutHBase {
     @Override
     protected PutFlowFile createPut(final ProcessSession session, final ProcessContext context, final FlowFile flowFile) {
         final String tableName = context.getProperty(TABLE_NAME).evaluateAttributeExpressions(flowFile).getValue();
-        final String row = context.getProperty(ROW_ID).evaluateAttributeExpressions(flowFile).getValue();
+        final byte[] row = context.getProperty(ROW_ID).evaluateAttributeExpressions(flowFile).getValue().getBytes(StandardCharsets.UTF_8);
         final String columnFamily = context.getProperty(COLUMN_FAMILY).evaluateAttributeExpressions(flowFile).getValue();
         final String columnQualifier = context.getProperty(COLUMN_QUALIFIER).evaluateAttributeExpressions(flowFile).getValue();
 

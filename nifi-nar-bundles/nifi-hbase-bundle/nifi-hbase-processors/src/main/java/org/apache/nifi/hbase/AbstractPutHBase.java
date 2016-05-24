@@ -111,7 +111,7 @@ public abstract class AbstractPutHBase extends AbstractProcessor {
             } else if (!putFlowFile.isValid()) {
                 if (StringUtils.isBlank(putFlowFile.getTableName())) {
                     getLogger().error("Missing table name for FlowFile {}; routing to failure", new Object[]{flowFile});
-                } else if (StringUtils.isBlank(putFlowFile.getRow())) {
+                } else if (putFlowFile.getRow().length==0) {
                     getLogger().error("Missing row id for FlowFile {}; routing to failure", new Object[]{flowFile});
                 } else if (putFlowFile.getColumns() == null || putFlowFile.getColumns().isEmpty()) {
                     getLogger().error("No columns provided for FlowFile {}; routing to failure", new Object[]{flowFile});

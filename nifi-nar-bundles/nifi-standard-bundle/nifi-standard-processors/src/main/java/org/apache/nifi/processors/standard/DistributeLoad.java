@@ -23,11 +23,17 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.nifi.annotation.behavior.DynamicProperty;
@@ -119,11 +125,21 @@ public class DistributeLoad extends AbstractProcessor {
                     return result;
                 }
             }).build();
+
     public static final PropertyDescriptor LOAD_DISTRIBUTION_SERVICE_TEMPLATE = new PropertyDescriptor.Builder()
             .name("Load Distribution Service ID")
             .description("The identifier of the Load Distribution Service")
             .required(true)
             .identifiesControllerService(LoadDistributionService.class)
+            .build();
+
+    public static final PropertyDescriptor LOAD_DISTRIBUTION_SERVICE_TTL = new PropertyDescriptor.Builder()
+            .name("load-distribution-service-ttl")
+            .displayName("Load Distribution Service TTL")
+            .description("TTL for weightings returned from the load distribution service")
+            .required(true)
+            .defaultValue("30 secs")
+            .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR)
             .build();
 
     private List<PropertyDescriptor> properties;
@@ -133,6 +149,7 @@ public class DistributeLoad extends AbstractProcessor {
     private final AtomicBoolean doCustomValidate = new AtomicBoolean(false);
     private volatile LoadDistributionListener myListener;
     private final AtomicBoolean doSetProps = new AtomicBoolean(true);
+    private final AtomicReference<LoadingCache<Integer, Integer>> cacheRef = new AtomicReference<>();
 
     @Override
     protected void init(final ProcessorInitializationContext context) {
@@ -185,6 +202,7 @@ public class DistributeLoad extends AbstractProcessor {
         if (strategyRef.get() instanceof LoadDistributionStrategy && doSetProps.getAndSet(false)) {
             final List<PropertyDescriptor> props = new ArrayList<>(properties);
             props.add(LOAD_DISTRIBUTION_SERVICE_TEMPLATE);
+            props.add(LOAD_DISTRIBUTION_SERVICE_TTL);
             props.add(HOSTNAMES);
             this.properties = Collections.unmodifiableList(props);
         } else if (doSetProps.getAndSet(false)) {
@@ -269,8 +287,7 @@ public class DistributeLoad extends AbstractProcessor {
         return results;
     }
 
-    @OnScheduled
-    public void createWeightedList(final ProcessContext context) {
+    public Map<Integer, Integer> createWeightedList(final ProcessContext context) {
         final Map<Integer, Integer> weightings = new LinkedHashMap<>();
 
         String distStrat = context.getProperty(DISTRIBUTION_STRATEGY).getValue();
@@ -290,7 +307,8 @@ public class DistributeLoad extends AbstractProcessor {
                 public void update(Map<String, Integer> loadInfo) {
                     for (Relationship rel : relationshipsRef.get()) {
                         String hostname = rel.getDescription();
-                        Integer weight = 1;
+                        // Integer weight = 1;
+                        Integer weight = 0;
                         if (loadInfo.containsKey(hostname)) {
                             weight = loadInfo.get(hostname);
                         }
@@ -303,7 +321,8 @@ public class DistributeLoad extends AbstractProcessor {
             Map<String, Integer> loadInfo = svc.getLoadDistribution(hostNameSet, myListener);
             for (Relationship rel : relationshipsRef.get()) {
                 String hostname = rel.getDescription();
-                Integer weight = 1;
+                // Integer weight = 1;
+                Integer weight = 0;
                 if (loadInfo.containsKey(hostname)) {
                     weight = loadInfo.get(hostname);
                 }
@@ -323,20 +342,97 @@ public class DistributeLoad extends AbstractProcessor {
                 }
             }
         }
+
         updateWeightedRelationships(weightings);
+
+        return weightings;
     }
 
     private void updateWeightedRelationships(final Map<Integer, Integer> weightings) {
         final List<Relationship> relationshipList = new ArrayList<>();
         for (final Map.Entry<Integer, Integer> entry : weightings.entrySet()) {
             final String relationshipName = String.valueOf(entry.getKey());
+            final Integer relationshipWeight = entry.getValue();
             final Relationship relationship = new Relationship.Builder().name(relationshipName).build();
-            for (int i = 0; i < entry.getValue(); i++) {
+
+            getLogger().warn("Updating relationship {} weight to {}", new Object[]{relationshipName, relationshipWeight});
+
+            if (relationshipWeight == null || relationshipWeight <= 0) {
+                getLogger().warn("Excluding relationship because weight is {}", new Object[]{relationshipWeight});
+                continue;
+            }
+
+            for (int i = 0; i < relationshipWeight; i++) {
                 relationshipList.add(relationship);
             }
         }
 
+        Collections.shuffle(relationshipList, new Random(System.nanoTime()));
         this.weightedRelationshipListRef.set(Collections.unmodifiableList(relationshipList));
+    }
+
+    private List<Relationship> getWeightedRelationshipList(final ProcessContext context) {
+        final String strategy = context.getProperty(DISTRIBUTION_STRATEGY).getValue();
+        final LoadingCache<Integer, Integer> cache = cacheRef.get();
+        try {
+            if (strategy.equals(STRATEGY_LOAD_DISTRIBUTION_SERVICE) && cache != null) {
+                final Set<Relationship> relationships = relationshipsRef.get();
+                if (relationships != null && !relationships.isEmpty()) {
+                    final Map<Integer, Integer> weightings = new LinkedHashMap<>();
+                    for (final Relationship relationship : relationships) {
+                        final String relationshipName = relationship.getName();
+                        final Integer relationshipKey = Integer.valueOf(relationshipName);
+                        final Integer relationshipWeight = cache.get(relationshipKey);
+
+                        getLogger().warn("Returning relationship {} with weight {}", new Object[]{relationshipKey, relationshipWeight});
+
+                        weightings.put(relationshipKey, relationshipWeight);
+                    }
+                    updateWeightedRelationships(weightings);
+                }
+            }
+        }
+        catch (Exception e) {
+            getLogger().error(e.getMessage(), e);
+        }
+        return this.weightedRelationshipListRef.get();
+    }
+
+    @OnScheduled
+    public void onScheduled(final ProcessContext context) throws Exception {
+        final Map<Integer, Integer> weightings = createWeightedList(context);
+        final String strategy = context.getProperty(DISTRIBUTION_STRATEGY).getValue();
+        if (strategy.equals(STRATEGY_LOAD_DISTRIBUTION_SERVICE)) {
+            final int ttl = context.getProperty(LOAD_DISTRIBUTION_SERVICE_TTL).asTimePeriod(TimeUnit.SECONDS).intValue();
+
+            final LoadingCache<Integer, Integer> cache = CacheBuilder.newBuilder()
+               .expireAfterWrite(ttl, TimeUnit.SECONDS)
+               .build(
+                   new CacheLoader<Integer, Integer>() {
+                       public Integer load(Integer key) {
+                           getLogger().warn("Cache miss for relationship {}, reloading weights", new Object[]{key});
+
+                           final Map<Integer, Integer> weightings = createWeightedList(context);
+                           for (final Map.Entry<Integer, Integer> e : weightings.entrySet()) {
+                               getLogger().warn("Relationship {} has weight {}", new Object[]{e.getKey(), e.getValue()});
+                           }
+
+                           Integer weight = weightings.get(key);
+                           if (weight == null) {
+                               weight = 0;
+                           }
+
+                           return weight;
+                       }
+                   });
+
+            // Warm the cache
+            for (final Integer key : weightings.keySet()) {
+                cache.get(key);
+            }
+
+            cacheRef.set(cache);
+        }
     }
 
     @Override
@@ -406,13 +502,16 @@ public class DistributeLoad extends AbstractProcessor {
 
         @Override
         public Relationship mapToRelationship(final ProcessContext context, final FlowFile flowFile) {
-            final List<Relationship> relationshipList = DistributeLoad.this.weightedRelationshipListRef.get();
+            // final List<Relationship> relationshipList = DistributeLoad.this.weightedRelationshipListRef.get();
+            final List<Relationship> relationshipList = getWeightedRelationshipList(context);
             final int numRelationships = relationshipList.size();
 
             // create a HashSet that contains all of the available relationships, as calling #contains on HashSet
             // is much faster than calling it on a List
             boolean foundFreeRelationship = false;
             Relationship relationship = null;
+
+            getLogger().warn("numRelationships is {}", new Object[]{numRelationships});
 
             int attempts = 0;
             while (!foundFreeRelationship) {
@@ -441,7 +540,8 @@ public class DistributeLoad extends AbstractProcessor {
 
         @Override
         public Relationship mapToRelationship(final ProcessContext context, final FlowFile flowFile) {
-            final List<Relationship> relationshipList = DistributeLoad.this.weightedRelationshipListRef.get();
+            // final List<Relationship> relationshipList = DistributeLoad.this.weightedRelationshipListRef.get();
+            final List<Relationship> relationshipList = getWeightedRelationshipList(context);
             final long counterValue = counter.getAndIncrement();
             final int idx = (int) (counterValue % relationshipList.size());
             final Relationship relationship = relationshipList.get(idx);
@@ -460,7 +560,8 @@ public class DistributeLoad extends AbstractProcessor {
 
         @Override
         public Relationship mapToRelationship(final ProcessContext context, final FlowFile flowFile) {
-            final List<Relationship> relationshipList = DistributeLoad.this.weightedRelationshipListRef.get();
+            // final List<Relationship> relationshipList = DistributeLoad.this.weightedRelationshipListRef.get();
+            final List<Relationship> relationshipList = getWeightedRelationshipList(context);
             final int numRelationships = relationshipList.size();
 
             // create a HashSet that contains all of the available relationships, as calling #contains on HashSet

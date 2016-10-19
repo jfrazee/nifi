@@ -26,6 +26,7 @@
     <packaging>pom</packaging>
 
     <modules>
+        <module>nifi-facebook-processors</module>      
         <module>nifi-twitter-processors</module>
         <module>nifi-social-media-nar</module>
     </modules>

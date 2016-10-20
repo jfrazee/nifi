@@ -33,7 +33,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -72,6 +74,10 @@ import com.restfb.types.NamedFacebookType;
 
 import okhttp3.HttpUrl;
 
+import org.apache.nifi.facebook.FacebookRateLimitException;
+import org.apache.nifi.facebook.FacebookService;
+import org.apache.nifi.facebook.StandardFacebookService;
+
 @InputRequirement(Requirement.INPUT_REQUIRED)
 @Tags({"Facebook", "social"})
 @CapabilityDescription("Fetch a Facebook object")
@@ -88,48 +94,13 @@ public class FetchFacebookObject extends AbstractProcessor {
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
-    public static final PropertyDescriptor FB_APP_ID = new PropertyDescriptor
-            .Builder().name("facebook-app-id")
-            .displayName("Application ID")
-            .description("Facebook application ID")
+    public static final PropertyDescriptor FB_API_SERVICE =
+        new PropertyDescriptor.Builder()
+            .name("facebook-api-service")
+            .displayName("Facebook Service")
+            .description("The Facebook API service to use")
+            .identifiesControllerService(FacebookService.class)
             .required(true)
-            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-            .build();
-
-    public static final PropertyDescriptor FB_APP_SECRET = new PropertyDescriptor
-            .Builder().name("facebook-app-secret")
-            .displayName("Application Secret")
-            .description("Facebook application secret")
-            .required(true)
-            .sensitive(true)
-            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-            .build();
-
-    public static final PropertyDescriptor FB_ACCESS_TOKEN = new PropertyDescriptor
-            .Builder().name("facebook-access-token")
-            .displayName("Access Token")
-            .description("Facebook access token")
-            .required(true)
-            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-            .build();
-
-    public static final PropertyDescriptor FB_API_VERSION = new PropertyDescriptor.Builder()
-            .name("facebook-api-version")
-            .displayName("API Version")
-            .description("Facebook API version")
-            .required(true)
-            .allowableValues(
-                Version.VERSION_2_8.getUrlElement(),
-                Version.VERSION_2_7.getUrlElement(),
-                Version.VERSION_2_6.getUrlElement(),
-                Version.VERSION_2_5.getUrlElement(),
-                Version.VERSION_2_4.getUrlElement(),
-                Version.VERSION_2_3.getUrlElement(),
-                Version.VERSION_2_2.getUrlElement(),
-                Version.VERSION_2_1.getUrlElement()
-            )
-            .defaultValue(Version.LATEST.getUrlElement())
-            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
     public static final Relationship REL_SUCCESS = new Relationship.Builder()
@@ -156,16 +127,11 @@ public class FetchFacebookObject extends AbstractProcessor {
 
     private Set<Relationship> relationships;
 
-    private FacebookClient fbClient;
-
     @Override
     protected void init(final ProcessorInitializationContext context) {
         final List<PropertyDescriptor> descriptors = new ArrayList<PropertyDescriptor>();
         descriptors.add(FB_OBJECT_FIELDS);
-        descriptors.add(FB_APP_ID);
-        descriptors.add(FB_APP_SECRET);
-        descriptors.add(FB_ACCESS_TOKEN);
-        descriptors.add(FB_API_VERSION);
+        descriptors.add(FB_API_SERVICE);
         this.descriptors = Collections.unmodifiableList(descriptors);
 
         final Set<Relationship> relationships = new HashSet<Relationship>();
@@ -186,15 +152,6 @@ public class FetchFacebookObject extends AbstractProcessor {
         return this.descriptors;
     }
 
-    @OnScheduled
-    public void onScheduled(final ProcessContext context) {
-        final String appId = context.getProperty(FB_APP_ID).getValue();
-        final String appSecret = context.getProperty(FB_APP_SECRET).getValue();
-        final String accessToken = context.getProperty(FB_ACCESS_TOKEN).getValue();
-        final Version apiVersion = Version.getVersionFromString(context.getProperty(FB_API_VERSION).getValue());
-        fbClient = new DefaultFacebookClient(accessToken, appSecret, apiVersion);
-    }
-
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
         final FlowFile flowFile = session.get();
@@ -206,24 +163,22 @@ public class FetchFacebookObject extends AbstractProcessor {
             .evaluateAttributeExpressions(flowFile)
             .getValue();
 
+        final FacebookService fbService = context.getProperty(FB_API_SERVICE)
+            .asControllerService(FacebookService.class);
+
+        if (fbService.isRateLimited()) {
+            getLogger().warn("Rate limited for {} minutes, penalizing FlowFile {} and yielding context", new Object[]{getMinutesFromNow(fbService.getResetTime()), flowFile});
+            session.penalize(flowFile);
+            context.yield();
+            return;
+        }
+
         final Map<String, String> attributes = new HashMap<>();
         attributes.put("mime.type", "application/json");
         attributes.put("mime.extension", ".json");
 
-        String pageDepth = flowFile.getAttribute("facebook.paging.depth");
-        if (StringUtils.isEmpty(pageDepth)) {
-            pageDepth = "0";
-        }
-
-        try {
-            pageDepth = String.valueOf(Integer.parseInt(pageDepth) + 1);
-        } catch (final Exception e) {
-            getLogger().warn(e.getMessage(), e);
-            getLogger().warn("Setting page depth to 1");
-            pageDepth = "1";
-        }
-        attributes.put("facebook.paging.depth", pageDepth);
-
+        final AtomicReference<FacebookRateLimitException> fbRateLimitExceptionRef = new AtomicReference<>();
+        final AtomicReference<String> fbObjectPathRef = new AtomicReference<>();
         final AtomicReference<String> fbObjectRef = new AtomicReference<>();
         final AtomicReference<String> prevRef = new AtomicReference<>();
         final AtomicReference<String> nextRef = new AtomicReference<>();
@@ -233,12 +188,14 @@ public class FetchFacebookObject extends AbstractProcessor {
             public void process(final InputStream in) throws IOException {
                 try {
                     final String fbObjectPath = StringUtils.trimToEmpty(IOUtils.toString(in, StandardCharsets.UTF_8));
-                    if (StringUtils.isEmpty(fbObjectPath)) {
+                    if (StringUtils.isNotEmpty(fbObjectPath)) {
+                        fbObjectPathRef.set(fbObjectPath);
+                    } else {
                         getLogger().error("Object path was empty for FlowFile {}", new Object[]{flowFile});
                         return;
                     }
 
-                    final JsonObject fbObject = fetchObject(fbObjectPath, fbObjectFields);
+                    final JsonObject fbObject = fbService.fetchObject(fbObjectPath, fbObjectFields);
                     if (fbObject != null && fbObject.length() > 0) {
                         attributes.put("facebook.object.path", fbObjectPath);
 
@@ -256,11 +213,23 @@ public class FetchFacebookObject extends AbstractProcessor {
                     } else {
                         getLogger().warn("Object at {} was empty for FlowFile {}", new Object[]{fbObjectPath, flowFile});
                     }
+                } catch (final FacebookRateLimitException e) {
+                    fbRateLimitExceptionRef.set(e);
                 } catch (final Exception e) {
                     getLogger().error(e.getMessage(), e);
                 }
             }
         });
+
+        final String fbObjectPath = fbObjectPathRef.get();
+        final FacebookRateLimitException fbRateLimitException = fbRateLimitExceptionRef.get();
+
+        if (fbRateLimitException != null) {
+            getLogger().warn("Rate limited while fetching object at {}, penalizing FlowFile {} and yielding context for {} minutes", new Object[]{Objects.toString(fbObjectPath), flowFile, getMinutesFromNow(fbService.getResetTime())});
+            session.penalize(flowFile);
+            context.yield();
+            return;
+        }
 
         final String fbObject = fbObjectRef.get();
         if (StringUtils.isEmpty(fbObject)) {
@@ -277,7 +246,6 @@ public class FetchFacebookObject extends AbstractProcessor {
                     out.write(prev.getBytes(StandardCharsets.UTF_8));
                 }
             });
-            prevFlowFile = session.putAttribute(prevFlowFile, "facebook.paging.depth", pageDepth);
             session.transfer(prevFlowFile, REL_PREVIOUS);
             attributes.put("facebook.paging.previous", prev);
         }
@@ -291,7 +259,6 @@ public class FetchFacebookObject extends AbstractProcessor {
                     out.write(next.getBytes(StandardCharsets.UTF_8));
                 }
             });
-            nextFlowFile = session.putAttribute(nextFlowFile, "facebook.paging.depth", pageDepth);
             session.transfer(nextFlowFile, REL_NEXT);
             attributes.put("facebook.paging.next", next);
         }
@@ -307,20 +274,6 @@ public class FetchFacebookObject extends AbstractProcessor {
 
         session.transfer(fbObjectFlowFile, REL_SUCCESS);
         session.remove(flowFile);
-    }
-
-    private JsonObject fetchObject(final String fbObjectPath, final String fbObjectFields) throws URISyntaxException {
-        final URI fbObjectURI = new URI(fbObjectPath);
-        final String fbObjectId = fbObjectURI.getPath();
-        final String fbObjectQuery = fbObjectURI.getQuery();
-        final List<Parameter> fbObjectParams = new ArrayList<>();
-        // if (includeMetadata) {
-        //     fbObjectParams.add(Parameter.with("metadata", 1));
-        // }
-
-        final JsonObject fbObject = fbClient.fetchObject(fbObjectId, JsonObject.class, fbObjectParams.toArray(new Parameter[]{}));
-
-        return fbObject;
     }
 
     private String getPageObjectPath(final JsonObject fbObject, final String pageKey) throws MalformedURLException {
@@ -351,6 +304,15 @@ public class FetchFacebookObject extends AbstractProcessor {
 
     private String getNextObjectPath(final JsonObject fbObject) throws MalformedURLException {
         return getPageObjectPath(fbObject, "next");
+    }
+
+    private long getMinutesFromNow(long millis) {
+        final long delta = millis - System.currentTimeMillis();
+        if (delta > 0) {
+            return TimeUnit.MILLISECONDS.toMinutes(delta);
+        } else {
+            return 0;
+        }
     }
 
 }

@@ -84,11 +84,15 @@ import com.restfb.types.FacebookType;
 import com.restfb.types.NamedFacebookType;
 import com.restfb.exception.FacebookGraphException;
 
-import com.google.common.util.concurrent.RateLimiter;
+import org.apache.commons.lang3.StringUtils;
 
 @Tags({"Facebook", "social"})
-@CapabilityDescription("Standard implementation of Facebook API service.")
+@CapabilityDescription("Standard implementation of the Facebook API service.")
 public class StandardFacebookService extends AbstractControllerService implements FacebookService {
+
+    private static final String DEFAULT_RATE_LIMIT_PERIOD = "15 mins";
+
+    private static final long DEFAULT_RATE_LIMIT_PERIOD_MILLIS = 15 * 60 * 1000;
 
     public static final PropertyDescriptor FB_APP_ID = new PropertyDescriptor
             .Builder().name("facebook-app-id")
@@ -112,6 +116,7 @@ public class StandardFacebookService extends AbstractControllerService implement
             .displayName("Access Token")
             .description("Facebook access token")
             .required(true)
+            .sensitive(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
@@ -134,6 +139,15 @@ public class StandardFacebookService extends AbstractControllerService implement
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
+    public static final PropertyDescriptor RATE_LIMIT_PERIOD = new PropertyDescriptor.Builder()
+            .name("rate-limit-period")
+            .displayName("Rate Limit Period")
+            .description("How long to penalize and yield after encountering a rate limit exception")
+            .required(true)
+            .defaultValue(DEFAULT_RATE_LIMIT_PERIOD)
+            .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR)
+            .build();
+
     private static final List<PropertyDescriptor> descriptors;
 
     static {
@@ -142,12 +156,15 @@ public class StandardFacebookService extends AbstractControllerService implement
         _descriptors.add(FB_APP_SECRET);
         _descriptors.add(FB_ACCESS_TOKEN);
         _descriptors.add(FB_API_VERSION);
+        _descriptors.add(RATE_LIMIT_PERIOD);
         descriptors = Collections.unmodifiableList(_descriptors);
     }
 
     private final AtomicReference<DefaultFacebookClient> fbClientRef = new AtomicReference<>();
 
     private final AtomicLong resetTimeRef = new AtomicLong(0);
+
+    private final AtomicLong rateLimitPeriodMillisRef = new AtomicLong(DEFAULT_RATE_LIMIT_PERIOD_MILLIS);
 
     @OnEnabled
     public void onEnabled(final ConfigurationContext context) throws InitializationException {
@@ -157,11 +174,21 @@ public class StandardFacebookService extends AbstractControllerService implement
         final Version apiVersion = Version.getVersionFromString(context.getProperty(FB_API_VERSION).getValue());
         final DefaultFacebookClient fbClient = new DefaultFacebookClient(accessToken, appSecret, apiVersion);
         fbClientRef.set(fbClient);
+
+        final Long rateLimitPeriodMillis = context.getProperty(RATE_LIMIT_PERIOD).asTimePeriod(TimeUnit.MILLISECONDS);
+        if (rateLimitPeriodMillis != null && rateLimitPeriodMillis > 0) {
+            rateLimitPeriodMillisRef.set(rateLimitPeriodMillis);
+        }
+
+        // This really shouldn't be here, need to add state
+        resetTimeRef.set(0);
     }
 
     @OnDisabled
     public void onDisabled(final ConfigurationContext context) {
         fbClientRef.set(null);
+        rateLimitPeriodMillisRef.set(DEFAULT_RATE_LIMIT_PERIOD_MILLIS);
+        resetTimeRef.set(0);
     }
 
     @Override
@@ -178,9 +205,9 @@ public class StandardFacebookService extends AbstractControllerService implement
                 final String fbObjectQuery = fbObjectURI.getQuery();
                 final List<Parameter> fbObjectParams = new ArrayList<>();
 
-                // if (includeMetadata) {
-                //     fbObjectParams.add(Parameter.with("metadata", 1));
-                // }
+                if (StringUtils.isNotEmpty(fbObjectFields)) {
+                    fbObjectParams.add(Parameter.with("fields", fbObjectFields));
+                }
 
                 return fbClient.fetchObject(fbObjectId, JsonObject.class, fbObjectParams.toArray(new Parameter[]{}));
             } catch (final FacebookGraphException e) {
@@ -228,7 +255,8 @@ public class StandardFacebookService extends AbstractControllerService implement
                 logger.debug(Objects.toString(e.getRawErrorJson()));
             }
 
-            final long resetTime = System.currentTimeMillis() + (60 * 60 * 1000);
+            final Long rateLimitPeriodMillis = rateLimitPeriodMillisRef.get();
+            final long resetTime = System.currentTimeMillis() + (rateLimitPeriodMillis != null ? rateLimitPeriodMillis : DEFAULT_RATE_LIMIT_PERIOD_MILLIS);
             setResetTime(resetTime);
 
             throw new FacebookRateLimitException(e, resetTime);

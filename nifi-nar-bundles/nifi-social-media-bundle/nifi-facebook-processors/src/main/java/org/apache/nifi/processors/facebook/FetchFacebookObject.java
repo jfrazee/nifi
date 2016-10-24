@@ -81,9 +81,11 @@ import org.apache.nifi.facebook.StandardFacebookService;
 @InputRequirement(Requirement.INPUT_REQUIRED)
 @Tags({"Facebook", "social"})
 @CapabilityDescription("Fetch a Facebook object")
-@SeeAlso({})
-@ReadsAttributes({@ReadsAttribute(attribute="", description="")})
-@WritesAttributes({@WritesAttribute(attribute="", description="")})
+@WritesAttributes({
+    @WritesAttribute(attribute="facebook.object.path", description="The object path fetched"),
+    @WritesAttribute(attribute="facebook.paging.previous", description="The path to the previous object for paginated resources"),
+    @WritesAttribute(attribute="facebook.paging.next", description="The path to the next object for paginated resources"),
+})
 public class FetchFacebookObject extends AbstractProcessor {
 
     public static final PropertyDescriptor FB_OBJECT_FIELDS = new PropertyDescriptor
@@ -91,6 +93,7 @@ public class FetchFacebookObject extends AbstractProcessor {
             .displayName("Fields")
             .description("Facebook object fields to fetch")
             .required(false)
+            .expressionLanguageSupported(true)
             .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
             .build();
 
@@ -173,15 +176,9 @@ public class FetchFacebookObject extends AbstractProcessor {
             return;
         }
 
-        final Map<String, String> attributes = new HashMap<>();
-        attributes.put("mime.type", "application/json");
-        attributes.put("mime.extension", ".json");
-
         final AtomicReference<FacebookRateLimitException> fbRateLimitExceptionRef = new AtomicReference<>();
         final AtomicReference<String> fbObjectPathRef = new AtomicReference<>();
-        final AtomicReference<String> fbObjectRef = new AtomicReference<>();
-        final AtomicReference<String> prevRef = new AtomicReference<>();
-        final AtomicReference<String> nextRef = new AtomicReference<>();
+        final AtomicReference<JsonObject> fbObjectRef = new AtomicReference<>();
 
         session.read(flowFile, new InputStreamCallback() {
             @Override
@@ -197,19 +194,7 @@ public class FetchFacebookObject extends AbstractProcessor {
 
                     final JsonObject fbObject = fbService.fetchObject(fbObjectPath, fbObjectFields);
                     if (fbObject != null && fbObject.length() > 0) {
-                        attributes.put("facebook.object.path", fbObjectPath);
-
-                        final String fbObjectPrevious = getPreviousObjectPath(fbObject);
-                        if (StringUtils.isNotEmpty(fbObjectPrevious)) {
-                            prevRef.set(fbObjectPrevious);
-                        }
-
-                        final String fbObjectNext = getNextObjectPath(fbObject);
-                        if (StringUtils.isNotEmpty(fbObjectNext)) {
-                            nextRef.set(fbObjectNext);
-                        }
-
-                        fbObjectRef.set(Objects.toString(fbObject));
+                        fbObjectRef.set(fbObject);
                     } else {
                         getLogger().warn("Object at {} was empty for FlowFile {}", new Object[]{fbObjectPath, flowFile});
                     }
@@ -231,43 +216,48 @@ public class FetchFacebookObject extends AbstractProcessor {
             return;
         }
 
-        final String fbObject = fbObjectRef.get();
-        if (StringUtils.isEmpty(fbObject)) {
+        final JsonObject fbObject = fbObjectRef.get();
+        if (fbObject == null || fbObject.length() <= 0) {
             session.transfer(session.penalize(flowFile), REL_FAILURE);
             return;
         }
 
-        final String prev = prevRef.get();
-        if (StringUtils.isNotEmpty(prev)) {
+        final Map<String, String> attributes = new HashMap<>();
+        attributes.put("facebook.object.path", fbObjectPath);
+        attributes.put("mime.type", "application/json");
+        attributes.put("mime.extension", ".json");
+
+        final String fbObjectPrevious = getPreviousObjectPath(fbObject);
+        if (StringUtils.isNotEmpty(fbObjectPrevious)) {
             FlowFile prevFlowFile = session.clone(flowFile);
             prevFlowFile = session.write(prevFlowFile, new OutputStreamCallback() {
                 @Override
                 public void process(OutputStream out) throws IOException {
-                    out.write(prev.getBytes(StandardCharsets.UTF_8));
+                    out.write(fbObjectPrevious.getBytes(StandardCharsets.UTF_8));
                 }
             });
             session.transfer(prevFlowFile, REL_PREVIOUS);
-            attributes.put("facebook.paging.previous", prev);
+            attributes.put("facebook.paging.previous", fbObjectPrevious);
         }
 
-        final String next = nextRef.get();
-        if (StringUtils.isNotEmpty(next)) {
+        final String fbObjectNext = getNextObjectPath(fbObject);
+        if (StringUtils.isNotEmpty(fbObjectNext)) {
             FlowFile nextFlowFile = session.clone(flowFile);
             nextFlowFile = session.write(nextFlowFile, new OutputStreamCallback() {
                 @Override
                 public void process(OutputStream out) throws IOException {
-                    out.write(next.getBytes(StandardCharsets.UTF_8));
+                    out.write(fbObjectNext.getBytes(StandardCharsets.UTF_8));
                 }
             });
             session.transfer(nextFlowFile, REL_NEXT);
-            attributes.put("facebook.paging.next", next);
+            attributes.put("facebook.paging.next", fbObjectNext);
         }
 
         FlowFile fbObjectFlowFile = session.clone(flowFile);
         fbObjectFlowFile = session.write(fbObjectFlowFile, new OutputStreamCallback() {
             @Override
             public void process(OutputStream out) throws IOException {
-                out.write(fbObject.getBytes(StandardCharsets.UTF_8));
+                out.write(Objects.toString(fbObject).getBytes(StandardCharsets.UTF_8));
             }
         });
         fbObjectFlowFile = session.putAllAttributes(fbObjectFlowFile, attributes);
@@ -276,33 +266,37 @@ public class FetchFacebookObject extends AbstractProcessor {
         session.remove(flowFile);
     }
 
-    private String getPageObjectPath(final JsonObject fbObject, final String pageKey) throws MalformedURLException {
-        final JsonObject fbObjectPaging = fbObject.optJsonObject("paging");
-        if (fbObjectPaging != null) {
-            final String fbObjectPage = fbObjectPaging.optString(pageKey);
-            if (StringUtils.isNotEmpty(fbObjectPage)) {
-                final HttpUrl fbObjectPageURL = HttpUrl.parse(fbObjectPage);
-                final List<String> fbObjectPageParams = new ArrayList<>();
-                for (int i = 0, size = fbObjectPageURL.querySize(); i < size; i++) {
-                    final String name = fbObjectPageURL.queryParameterName(i);
-                    final String value = fbObjectPageURL.queryParameterValue(i);
-                    if (!name.equals("access_token")) {
-                        fbObjectPageParams.add(name + "=" + value);
+    private String getPageObjectPath(final JsonObject fbObject, final String pageKey) {
+        try {
+            final JsonObject fbObjectPaging = fbObject.optJsonObject("paging");
+            if (fbObjectPaging != null) {
+                final String fbObjectPage = fbObjectPaging.optString(pageKey);
+                if (StringUtils.isNotEmpty(fbObjectPage)) {
+                    final HttpUrl fbObjectPageURL = HttpUrl.parse(fbObjectPage);
+                    final List<String> fbObjectPageParams = new ArrayList<>();
+                    for (int i = 0, size = fbObjectPageURL.querySize(); i < size; i++) {
+                        final String name = fbObjectPageURL.queryParameterName(i);
+                        final String value = fbObjectPageURL.queryParameterValue(i);
+                        if (!name.equals("access_token")) {
+                            fbObjectPageParams.add(name + "=" + value);
+                        }
                     }
+                    final String fbPageObjectPath = fbObjectPageURL.encodedPath().replaceAll("^(\\/v[0-9]+(\\.[0-9]+))?(\\/?.*)$", "$3");
+                    final String fbPageObjectQuery = String.join("&", fbObjectPageParams);
+                    return fbPageObjectPath + "?" + fbPageObjectQuery;
                 }
-                final String fbPageObjectPath = fbObjectPageURL.encodedPath().replaceAll("^(\\/v[0-9]+(\\.[0-9]+))?(\\/?.*)$", "$3");
-                final String fbPageObjectQuery = String.join("&", fbObjectPageParams);
-                return fbPageObjectPath + "?" + fbPageObjectQuery;
             }
+        } catch (final Exception e) {
+            getLogger().warn(e.getMessage(), e);
         }
         return null;
     }
 
-    private String getPreviousObjectPath(final JsonObject fbObject) throws MalformedURLException {
+    private String getPreviousObjectPath(final JsonObject fbObject) {
         return getPageObjectPath(fbObject, "previous");
     }
 
-    private String getNextObjectPath(final JsonObject fbObject) throws MalformedURLException {
+    private String getNextObjectPath(final JsonObject fbObject) {
         return getPageObjectPath(fbObject, "next");
     }
 

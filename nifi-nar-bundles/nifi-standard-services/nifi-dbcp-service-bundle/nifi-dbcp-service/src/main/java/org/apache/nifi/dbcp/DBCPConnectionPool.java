@@ -31,15 +31,20 @@ import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.reporting.InitializationException;
 import org.apache.nifi.util.file.classloader.ClassLoaderUtils;
 
+import java.io.PrintWriter;
 import java.net.MalformedURLException;
 import java.sql.Connection;
 import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Logger;
+
+import javax.sql.DataSource;
 
 /**
  * Implementation of for Database Connection Pooling Service. Apache DBCP is used for connection pooling functionality.
@@ -148,6 +153,7 @@ public class DBCPConnectionPool extends AbstractControllerService implements DBC
     }
 
     private volatile BasicDataSource dataSource;
+    private volatile DataSource wrappedDataSource;
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -215,6 +221,52 @@ public class DBCPConnectionPool extends AbstractControllerService implements DBC
                 .forEach((dynamicPropDescriptor) -> dataSource.addConnectionProperty(dynamicPropDescriptor.getName(),
                         context.getProperty(dynamicPropDescriptor).evaluateAttributeExpressions().getValue()));
 
+        // Create protected DataSource which is intended to be returned by public getDataSource() method.
+        wrappedDataSource = new DataSource() {
+            @Override
+            public Connection getConnection() throws SQLException {
+                return dataSource.getConnection();
+            }
+
+            @Override
+            public Connection getConnection(String user, String pass) throws SQLException {
+                throw new SQLException("User and password can not be overwritten.");
+            }
+
+            public int getLoginTimeout() throws SQLException {
+                throw new UnsupportedOperationException("Not supported by wrapped DataSource");
+            }
+
+            @Override
+            public PrintWriter getLogWriter() throws SQLException {
+                throw new UnsupportedOperationException("Not supported by wrapped DataSource");
+            }
+
+            @Override
+            public void setLogWriter(PrintWriter out) throws SQLException {
+                throw new UnsupportedOperationException("Not supported by wrapped DataSource");
+            }
+
+            @Override
+            public void setLoginTimeout(int seconds) throws SQLException {
+                throw new UnsupportedOperationException("Not supported by wrapped DataSource");
+            }
+
+            @Override
+            public Logger getParentLogger() throws SQLFeatureNotSupportedException {
+                throw new UnsupportedOperationException("Not supported by wrapped DataSource");
+            }
+
+            @Override
+            public <T> T unwrap(Class<T> iface) throws SQLException {
+                throw new UnsupportedOperationException("Not supported by wrapped DataSource");
+            }
+
+            @Override
+            public boolean isWrapperFor(Class<?> iface) throws SQLException {
+                return false;
+            }
+        };
     }
 
     /**
@@ -274,6 +326,11 @@ public class DBCPConnectionPool extends AbstractControllerService implements DBC
         } catch (final SQLException e) {
             throw new ProcessException(e);
         }
+    }
+
+    @Override
+    public DataSource getDataSource() throws ProcessException {
+        return wrappedDataSource;
     }
 
     @Override

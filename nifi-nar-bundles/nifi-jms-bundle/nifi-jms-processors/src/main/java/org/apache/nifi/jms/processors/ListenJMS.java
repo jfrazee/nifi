@@ -2,6 +2,7 @@ package org.apache.nifi.jms.processors;
 
 import java.io.IOException;
 import java.io.OutputStream;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -10,9 +11,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Map.Entry;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import javax.jms.BytesMessage;
 import javax.jms.Destination;
+import javax.jms.JMSException;
 import javax.jms.Message;
 import javax.jms.MessageListener;
 import javax.jms.Session;
@@ -22,6 +26,7 @@ import org.apache.activemq.ActiveMQConnectionFactory;
 import org.apache.activemq.broker.BrokerService;
 import org.apache.nifi.annotation.behavior.InputRequirement;
 import org.apache.nifi.annotation.behavior.TriggerSerially;
+import org.apache.nifi.annotation.behavior.TriggerWhenEmpty;
 import org.apache.nifi.annotation.behavior.InputRequirement.Requirement;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
@@ -29,6 +34,8 @@ import org.apache.nifi.annotation.lifecycle.OnScheduled;
 import org.apache.nifi.annotation.lifecycle.OnStopped;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.logging.ComponentLog;
+import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.AbstractSessionFactoryProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -37,7 +44,6 @@ import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.io.OutputStreamCallback;
 import org.apache.nifi.processor.util.StandardValidators;
-import org.springframework.jms.connection.CachingConnectionFactory;
 import org.springframework.jms.listener.DefaultMessageListenerContainer;
 
 
@@ -48,24 +54,34 @@ import org.springframework.jms.listener.DefaultMessageListenerContainer;
         + "a FlowFile and transitioning them to 'success' relationship. JMS attributes such as headers and properties are copied as FlowFile attributes. "
         + "This processor starts embedded JMS Broker (using Apache ActiveMQ) and MessageListener that will listen on the P2P (i.e., QUEUE) destination"
         + " named 'queue://dest-[PORT]' (e.g., 'queue://dest-61616'), so any messages that are sent by the external producer will be consumed by this processor.")
-public class ListenJMS extends AbstractSessionFactoryProcessor {
+public class ListenJMS extends AbstractProcessor {
 
-    static final PropertyDescriptor PORT = new PropertyDescriptor.Builder()
-            .name("port")
-            .displayName("Port")
-            .description("Port for the Message Broker to listen on. Message Broker will bind to 0.0.0.0 IP address of the machine this processor wil run on.")
-            .defaultValue("61616")
+    public static final PropertyDescriptor BROKER_URI = new PropertyDescriptor.Builder()
+            .name("broker-uri")
+            .displayName("Broker URI")
+            .description("The message broker URI. The message broker will bind to the IP address and port in the URI.")
+            .defaultValue("tcp://localhost:61616")
             .required(true)
-            .addValidator(StandardValidators.PORT_VALIDATOR)
+            .addValidator(StandardValidators.URI_VALIDATOR)
             .build();
 
-    static final PropertyDescriptor CONCURRENT_CONSUMERS = new PropertyDescriptor.Builder()
+    public static final PropertyDescriptor CONCURRENT_CONSUMERS = new PropertyDescriptor.Builder()
             .name("concurrent.consumers")
             .displayName("Concurrent Consumers")
             .description("Specifies the number of concurrent consumers to create. Default is 1. If specified value is > 1, then the ordering of messages will be affected.")
             .defaultValue("1")
             .required(true)
             .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .build();
+
+    public static final PropertyDescriptor MAX_MESSAGE_QUEUE_SIZE = new PropertyDescriptor.Builder()
+            .name("Max Size of Message Queue")
+            .description("The maximum size of the internal queue used to buffer messages being transferred from the underlying channel to the processor. " +
+                    "Setting this value higher allows more messages to be buffered in memory during surges of incoming messages, but increases the total " +
+                    "memory used by the processor.")
+            .addValidator(StandardValidators.POSITIVE_INTEGER_VALIDATOR)
+            .defaultValue("10000")
+            .required(true)
             .build();
 
     public static final Relationship REL_SUCCESS = new Relationship.Builder()
@@ -79,37 +95,73 @@ public class ListenJMS extends AbstractSessionFactoryProcessor {
 
     static {
         descriptors = new ArrayList<>();
-        descriptors.add(PORT);
+        descriptors.add(BROKER_URI);
         descriptors.add(CONCURRENT_CONSUMERS);
+        descriptors.add(MAX_MESSAGE_QUEUE_SIZE);
 
         relationships = new HashSet<>();
         relationships.add(REL_SUCCESS);
     }
 
-    private volatile boolean started;
-
     private volatile BrokerService broker;
-
-    private volatile CachingConnectionFactory connectionFactory;
 
     private volatile DefaultMessageListenerContainer messageListenerContainer;
 
-    private volatile ProcessSessionFactory sessionFactory;
+    private volatile String transitUri;
 
-    private volatile String url;
-
+    private BlockingQueue<Message> messages;
 
     @Override
-    public void onTrigger(ProcessContext processContext, ProcessSessionFactory sessionFactory) throws ProcessException {
-        if (this.sessionFactory == null) {
-            this.sessionFactory = sessionFactory;
+    public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
+        if (!broker.isStarted() || !messageListenerContainer.isRunning()) {
+            this.start(context);
         }
 
-        if (!this.started) {
-            this.start(processContext);
+        FlowFile flowFile = session.create();
+        if (flowFile == null) {
+            return;
         }
 
-        processContext.yield();
+        final ComponentLog logger = getLogger();
+
+        Message msg = null;
+        try {
+            msg = messages.take();
+        } catch (InterruptedException ie) {
+            throw new ProcessException(ie.getMessage(), ie);
+        }
+        final Message message = msg;
+
+        byte[] mBody = null;
+        if (message instanceof TextMessage) {
+            mBody = MessageBodyToBytesConverter.toBytes((TextMessage) message);
+        } else if (message instanceof BytesMessage) {
+            mBody = MessageBodyToBytesConverter.toBytes((BytesMessage) message);
+        } else {
+            throw new IllegalStateException("Message type other then TextMessage and BytesMessage are not supported.");
+        }
+        final byte[] messageBody = mBody;
+
+        flowFile = session.write(flowFile, new OutputStreamCallback() {
+            @Override
+            public void process(OutputStream out) throws IOException {
+                out.write(messageBody);
+            }
+        });
+
+        if (logger.isDebugEnabled()) {
+            logger.debug("Created FlowFile {} from Message {}", new Object[]{flowFile, messageBody});
+        }
+
+        // add attributes (headers and properties) and properties to FF
+        Map<String, Object> headers = JMSUtils.extractMessageHeaders(message);
+        flowFile = updateFlowFileAttributesWithJMSAttributes(headers, flowFile, session);
+        Map<String, String> properties = JMSUtils.extractMessageProperties(message);
+        flowFile = updateFlowFileAttributesWithJMSAttributes(properties, flowFile, session);
+
+        session.transfer(flowFile, REL_SUCCESS);
+        session.getProvenanceReporter().receive(flowFile, transitUri);
+        session.commit();
     }
 
     /**
@@ -133,37 +185,67 @@ public class ListenJMS extends AbstractSessionFactoryProcessor {
      */
     @OnScheduled
     public void initialize(ProcessContext processContext) throws Exception {
-        int port = processContext.getProperty(PORT).asInteger();
-        this.broker = new BrokerService();
-        // TODO see if there is a need to expose property to bind to a specific
-        // IP address.
-        this.url = "tcp://0.0.0.0:" + port;
-        broker.addConnector(this.url);
+        final URI uri =
+            new URI(processContext.getProperty(BROKER_URI).getValue());
+        final int concurrentConsumers = processContext.getProperty(CONCURRENT_CONSUMERS).asInteger();
+        final int maxQueueSize = processContext.getProperty(MAX_MESSAGE_QUEUE_SIZE).asInteger();
+        final String destinationName = "dest-" + uri.getPort();
 
-        this.connectionFactory = new CachingConnectionFactory(new ActiveMQConnectionFactory(this.url));
-        this.connectionFactory.afterPropertiesSet();
+        this.messages = new LinkedBlockingQueue<>(maxQueueSize);
+
+        this.broker = new BrokerService();
+        broker.addConnector("vm://localhost");
+        broker.addConnector(uri);
+        broker.setPersistent(false);
+        broker.setUseJmx(false);
+
+        final ActiveMQConnectionFactory connectionFactory = new ActiveMQConnectionFactory(uri);
 
         this.messageListenerContainer = new DefaultMessageListenerContainer();
-        this.messageListenerContainer.setConnectionFactory(connectionFactory);
-        this.messageListenerContainer.setSessionAcknowledgeMode(Session.CLIENT_ACKNOWLEDGE);
+        messageListenerContainer.setConnectionFactory(connectionFactory);
+        messageListenerContainer.setSessionAcknowledgeMode(Session.CLIENT_ACKNOWLEDGE);
+        messageListenerContainer.setConcurrentConsumers(concurrentConsumers);
+        messageListenerContainer.setDestinationName(destinationName);
+        messageListenerContainer.setMessageListener(new InProcessMessageListener(messages));
+        messageListenerContainer.setAutoStartup(false);
+        messageListenerContainer.afterPropertiesSet();
 
-        int concurrentConsumers = processContext.getProperty(CONCURRENT_CONSUMERS).asInteger();
-        this.messageListenerContainer.setConcurrentConsumers(concurrentConsumers);
-        this.messageListenerContainer.setDestinationName("queue://dest-" + port);
-        this.messageListenerContainer.setMessageListener(new InProcessMessageListener());
-        this.messageListenerContainer.afterPropertiesSet();
+        this.transitUri = uri.resolve("/").resolve(destinationName).toString();
     }
 
     /**
      *
      */
     private void start(ProcessContext processContext) {
-        try {
-            this.broker.start();
-        } catch (Exception e) {
-            throw new ProcessException("Failed to start Message Broker.", e);
+        final ComponentLog logger = getLogger();
+
+        if (!broker.isStarted()) {
+            try {
+                broker.start();
+            } catch (Exception e) {
+                throw new ProcessException("Failed to start message broker", e);
+            }
+        } else {
+            logger.warn("Message broker was already started");
         }
-        this.messageListenerContainer.start();
+
+        if (!broker.isStarted()) {
+            throw new ProcessException("Failed to start message broker");
+        }
+
+        if (!messageListenerContainer.isRunning()) {
+            try {
+                messageListenerContainer.start();
+            } catch (Exception e) {
+                throw new ProcessException("Failed to start message listener container");
+            }
+        } else {
+            logger.warn("Message listener container was already running");
+        }
+
+        if (!messageListenerContainer.isRunning()) {
+            throw new ProcessException("Failed to start message listener container");
+        }
     }
 
     /**
@@ -171,16 +253,35 @@ public class ListenJMS extends AbstractSessionFactoryProcessor {
      */
     @OnStopped
     public void stop() {
-        if (this.started) {
+        final ComponentLog logger = getLogger();
+
+        if (broker.isStarted()) {
             try {
-                this.broker.stop();
+                broker.stop();
             } catch (Exception e) {
-                this.getLogger().error("Failed to stop Message Broker", e);
+                logger.error("Failed to stop message broker", e);
             }
-            this.messageListenerContainer.stop();
-            this.connectionFactory.destroy();
+        } else {
+            logger.warn("Message broker was not started");
         }
-        this.started = false;
+
+        if (broker.isStarted()) {
+            throw new ProcessException("Failed to stop message broker");
+        }
+
+        if (messageListenerContainer.isRunning()) {
+            try {
+                messageListenerContainer.stop();
+            } catch (Exception e) {
+                logger.error("Failed to stop message listener container", e);
+            }
+        } else {
+            logger.warn("Message listener container was not running");
+        }
+
+        if (messageListenerContainer.isRunning()) {
+            throw new ProcessException("Failed to stop message listener container");
+        }
     }
 
     /**
@@ -188,6 +289,12 @@ public class ListenJMS extends AbstractSessionFactoryProcessor {
      * the target P2P {@link Destination}.
      */
     private class InProcessMessageListener implements MessageListener {
+
+        private BlockingQueue<Message> messages;
+
+        public InProcessMessageListener(BlockingQueue<Message> messages) {
+            this.messages = messages;
+        }
 
         /**
          * Given that we set ACK mode as CLIENT, the message will be
@@ -198,36 +305,21 @@ public class ListenJMS extends AbstractSessionFactoryProcessor {
          */
         @Override
         public void onMessage(Message message) {
-            byte[] mBody = null;
-            if (message instanceof TextMessage) {
-                mBody = MessageBodyToBytesConverter.toBytes((TextMessage) message);
-            } else if (message instanceof BytesMessage) {
-                mBody = MessageBodyToBytesConverter.toBytes((BytesMessage) message);
-            } else {
-                throw new IllegalStateException("Message type other then TextMessage and BytesMessage are not supported.");
+            final ComponentLog logger = getLogger();
+
+            if (logger.isDebugEnabled()) {
+                logger.debug("Received Message {}", new Object[]{message});
             }
-            final byte[] messageBody = mBody;
-            ProcessSession processSession = ListenJMS.this.sessionFactory.createSession();
 
-            FlowFile flowFile = processSession.create();
-            flowFile = processSession.write(flowFile, new OutputStreamCallback() {
-                @Override
-                public void process(OutputStream out) throws IOException {
-                    out.write(messageBody);
-                }
-            });
-            // add attributes (headers and properties) and properties to FF
-            Map<String, Object> messageHeaders = JMSUtils.extractMessageHeaders(message);
-            flowFile = ListenJMS.this.updateFlowFileAttributesWithJMSAttributes(messageHeaders, flowFile, processSession);
-            Map<String, String> messageProperties = JMSUtils.extractMessageProperties(message);
-            flowFile = ListenJMS.this.updateFlowFileAttributesWithJMSAttributes(messageProperties, flowFile, processSession);
-
-            processSession.transfer(flowFile, REL_SUCCESS);
-            processSession.getProvenanceReporter().receive(flowFile, ListenJMS.this.url);
-
-            processSession.commit();
-            // upon reaching the above line, the MessageListenerContainer will
-            // issue session.commit() given the CLIENT ACK setting
+            try {
+                messages.put(message);
+            } catch (InterruptedException ie) {
+                logger.error("Error while processing message: {}", new Object[]{ie.getMessage()}, ie);
+                throw new RuntimeException(ie);
+            } catch (Exception e) {
+                logger.error("Error while processing message: {}", new Object[]{e.getMessage()}, e);
+                throw e;
+            }
         }
     }
 

@@ -96,7 +96,7 @@ public class PutFTP extends PutFileTransfer<FTPTransfer> {
         properties.add(FTPTransfer.HTTP_PROXY_PASSWORD);
         properties.add(FTPTransfer.BUFFER_SIZE);
         properties.add(FTPTransfer.UTF8_ENCODING);
-
+        properties.add(FTPTransfer.SSL_CONTEXT_SERVICE);
         this.properties = Collections.unmodifiableList(properties);
     }
 

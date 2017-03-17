@@ -86,6 +86,7 @@ public class ListFTP extends ListFileTransfer {
         properties.add(FTPTransfer.HTTP_PROXY_PASSWORD);
         properties.add(FTPTransfer.BUFFER_SIZE);
         properties.add(TARGET_SYSTEM_TIMESTAMP_PRECISION);
+        properties.add(FTPTransfer.SSL_CONTEXT_SERVICE);
         return properties;
     }
 

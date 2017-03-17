@@ -34,10 +34,13 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
+import javax.net.ssl.SSLContext;
+
 import org.apache.commons.net.ftp.FTPClient;
 import org.apache.commons.net.ftp.FTPFile;
 import org.apache.commons.net.ftp.FTPHTTPClient;
 import org.apache.commons.net.ftp.FTPReply;
+import org.apache.commons.net.ftp.FTPSClient;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.logging.ComponentLog;
@@ -45,6 +48,8 @@ import org.apache.nifi.processor.DataUnit;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.ssl.SSLContextService;
+import org.apache.nifi.ssl.SSLContextService.ClientAuth;
 
 public class FTPTransfer implements FileTransfer {
 
@@ -113,14 +118,21 @@ public class FTPTransfer implements FileTransfer {
         .addValidator(StandardValidators.DATA_SIZE_VALIDATOR)
         .build();
     public static final PropertyDescriptor UTF8_ENCODING = new PropertyDescriptor.Builder()
-            .name("ftp-use-utf8")
-            .displayName("Use UTF-8 Encoding")
-            .description("Tells the client to use UTF-8 encoding when processing files and filenames. If set to true, the server must also support UTF-8 encoding.")
-            .required(true)
-            .allowableValues("true", "false")
-            .defaultValue("false")
-            .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
-            .build();
+        .name("ftp-use-utf8")
+        .displayName("Use UTF-8 Encoding")
+        .description("Tells the client to use UTF-8 encoding when processing files and filenames. If set to true, the server must also support UTF-8 encoding.")
+        .required(true)
+        .allowableValues("true", "false")
+        .defaultValue("false")
+        .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
+        .build();
+    public static final PropertyDescriptor SSL_CONTEXT_SERVICE = new PropertyDescriptor.Builder()
+        .name("ssl-context-service")
+        .displayName("SSL Context Service")
+        .description("The SSL Context Service used to provide client certificate information for FTPS (this forces the use of FTPS)")
+        .required(false)
+        .identifiesControllerService(SSLContextService.class)
+        .build();
 
     private final ComponentLog logger;
 
@@ -524,8 +536,13 @@ public class FTPTransfer implements FileTransfer {
         final Proxy.Type proxyType = Proxy.Type.valueOf(ctx.getProperty(PROXY_TYPE).getValue());
         final String proxyHost = ctx.getProperty(PROXY_HOST).getValue();
         final Integer proxyPort = ctx.getProperty(PROXY_PORT).asInteger();
+        final SSLContextService sslService = ctx.getProperty(SSL_CONTEXT_SERVICE).asControllerService(SSLContextService.class);
+        final SSLContext sslContext = sslService == null ? null : sslService.createSSLContext(ClientAuth.NONE);
         FTPClient client;
-        if (proxyType == Proxy.Type.HTTP) {
+        if (sslContext != null) {
+            client = new FTPSClient(sslContext);
+        }
+        else if (proxyType == Proxy.Type.HTTP) {
             client = new FTPHTTPClient(proxyHost, proxyPort, ctx.getProperty(HTTP_PROXY_USERNAME).getValue(), ctx.getProperty(HTTP_PROXY_PASSWORD).getValue());
         } else {
             client = new FTPClient();

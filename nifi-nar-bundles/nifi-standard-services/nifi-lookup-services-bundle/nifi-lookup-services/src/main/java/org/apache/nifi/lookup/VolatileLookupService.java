@@ -93,9 +93,8 @@ public class VolatileLookupService extends AbstractControllerService implements 
     }
 
     @Override
-    public Map<String, String> putAll(Map<String, String> values) {
+    public void putAll(Map<String, String> values) {
         cache.putAll(values);
-        return Collections.unmodifiableMap(cache);
     }
 
 }

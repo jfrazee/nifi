@@ -33,13 +33,13 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
-@Tags({"lookup", "cache", "enrich", "join"})
-@CapabilityDescription("A local in-memory lookup table backed by a concurrent map")
+@Tags({"lookup", "cache", "enrich", "join", "volatile"})
+@CapabilityDescription("An volatile, in-memory lookup service")
 public class VolatileLookupService extends AbstractControllerService implements MutableLookupService {
 
-    public static final PropertyDescriptor LOOKUP_SERVICE_CAPACITY =
+    public static final PropertyDescriptor CAPACITY =
         new PropertyDescriptor.Builder()
-            .name("lookup-service-capacity")
+            .name("capacity")
             .displayName("Capacity")
             .description("Capacity of the lookup service")
             .required(true)
@@ -54,15 +54,14 @@ public class VolatileLookupService extends AbstractControllerService implements 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
         final List<PropertyDescriptor> properties = new ArrayList<>();
-        properties.add(LOOKUP_SERVICE_CAPACITY);
+        properties.add(CAPACITY);
         this.properties = Collections.unmodifiableList(properties);
         return properties;
     }
 
     @OnEnabled
     public void onEnabled(final ConfigurationContext context) throws InitializationException {
-        Integer capacity =
-            context.getProperty(LOOKUP_SERVICE_CAPACITY).asInteger();
+        Integer capacity = context.getProperty(CAPACITY).asInteger();
         this.cache = new ConcurrentHashMap<>(capacity);
     }
 

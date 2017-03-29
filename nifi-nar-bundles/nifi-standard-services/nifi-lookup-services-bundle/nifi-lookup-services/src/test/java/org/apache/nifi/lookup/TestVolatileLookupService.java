@@ -32,7 +32,7 @@ import static org.hamcrest.CoreMatchers.instanceOf;
 public class TestVolatileLookupService {
 
     @Test
-    public void testLookupService() throws InitializationException {
+    public void testVolatileLookupService() throws InitializationException {
         final VolatileLookupService service = new
             VolatileLookupService();
 
@@ -58,7 +58,7 @@ public class TestVolatileLookupService {
     }
 
     @Test
-    public void testLookupServiceGetAll() throws InitializationException {
+    public void testVolatileLookupServiceGetAll() throws InitializationException {
         final VolatileLookupService service = new
             VolatileLookupService();
 
@@ -83,7 +83,7 @@ public class TestVolatileLookupService {
     }
 
     @Test
-    public void testLookupServicePutAll() throws InitializationException {
+    public void testVolatileLookupServicePutAll() throws InitializationException {
         final VolatileLookupService service = new
             VolatileLookupService();
 
@@ -106,7 +106,7 @@ public class TestVolatileLookupService {
     }
 
     @Test
-    public void testLookupServicePutIfAbsent() throws InitializationException {
+    public void testVolatileLookupServicePutIfAbsent() throws InitializationException {
         final VolatileLookupService service = new
             VolatileLookupService();
 

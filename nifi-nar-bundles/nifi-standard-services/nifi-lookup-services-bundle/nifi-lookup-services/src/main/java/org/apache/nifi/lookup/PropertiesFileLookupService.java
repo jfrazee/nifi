@@ -121,7 +121,7 @@ public class PropertiesFileLookupService extends AbstractControllerService imple
     }
 
     @Override
-    public Map<String, String> getAll() {
+    public Map<String, String> asMap() {
         final Configuration config = getConfiguration();
         if (config != null) {
             final Map<String, String> properties = new HashMap<>();

@@ -32,14 +32,16 @@ import org.apache.nifi.reporting.InitializationException;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 
+import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Test;
+
+import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertNotNull;
-
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Test;
+import static org.junit.Assert.assertThat;
 
 public class TestPropertiesFileLookupService {
 
@@ -54,6 +56,8 @@ public class TestPropertiesFileLookupService {
         runner.enableControllerService(service);
         runner.assertValid(service);
 
+        assertThat(service, instanceOf(LookupService.class));
+
         final String property1 = service.get("property.1");
         assertEquals("this is property 1", property1);
 
@@ -62,8 +66,22 @@ public class TestPropertiesFileLookupService {
 
         final String property3 = service.get("property.3");
         assertNull(property3);
+    }
 
-        final Map<String, String> actual = service.getAll();
+    @Test
+    public void testPropertiesFileLookupServiceAsMap() throws InitializationException {
+        final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
+        final PropertiesFileLookupService service = new PropertiesFileLookupService();
+        final Map<String, String> properties = new HashMap<>();
+        properties.put(PropertiesFileLookupService.PROPERTIES_FILE.getName(), "src/test/resources/test.properties");
+
+        runner.addControllerService("properties-file-lookup-service", service, properties);
+        runner.enableControllerService(service);
+        runner.assertValid(service);
+
+        assertThat(service, instanceOf(LookupService.class));
+
+        final Map<String, String> actual = service.asMap();
         final Map<String, String> expected = new HashMap<>();
         expected.put("property.1", "this is property 1");
         expected.put("property.2", "this is property 2");

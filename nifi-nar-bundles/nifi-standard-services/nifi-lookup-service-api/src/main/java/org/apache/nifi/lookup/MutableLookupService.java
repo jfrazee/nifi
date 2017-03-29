@@ -24,9 +24,9 @@ import org.apache.nifi.annotation.documentation.Tags;
 @CapabilityDescription("Mutable lookup service")
 public interface MutableLookupService extends LookupService {
 
-    String put(String id, String value);
+    String put(String key, String value);
 
-    String putIfAbsent(String id, String value);
+    String putIfAbsent(String key, String value);
 
     void putAll(Map<String, String> values);
 

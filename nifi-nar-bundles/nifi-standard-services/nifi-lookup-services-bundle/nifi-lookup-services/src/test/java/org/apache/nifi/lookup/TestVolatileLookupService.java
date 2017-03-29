@@ -23,42 +23,48 @@ import org.apache.nifi.reporting.InitializationException;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 
-import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.hamcrest.CoreMatchers.instanceOf;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertThat;
 
 public class TestVolatileLookupService {
 
     @Test
     public void testVolatileLookupService() throws InitializationException {
-        final VolatileLookupService service = new
-            VolatileLookupService();
+        final VolatileLookupService service = new VolatileLookupService();
 
-        final TestRunner runner =
-            TestRunners.newTestRunner(TestProcessor.class);
+        final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
         runner.addControllerService("volatile-lookup-service", service);
         runner.enableControllerService(service);
         runner.assertValid(service);
 
-        Assert.assertThat(service, instanceOf(MutableLookupService.class));
+        assertThat(service, instanceOf(MutableLookupService.class));
 
         final String put1 = service.put("key1", "value1");
-        Assert.assertNull(put1);
+        assertNull(put1);
 
         final String get1 = service.get("key1");
-        Assert.assertEquals("value1", get1);
+        assertEquals("value1", get1);
 
         final String put2 = service.put("key1", "value2");
-        Assert.assertEquals("value1", put2);
+        assertEquals("value1", put2);
 
         final String get2 = service.get("key1");
-        Assert.assertEquals("value2", get2);
+        assertEquals("value2", get2);
+
+        final String get3 = service.get("key3");
+        assertNull(get3);
     }
 
     @Test
-    public void testVolatileLookupServiceGetAll() throws InitializationException {
+    public void testVolatileLookupServiceAsMap() throws InitializationException {
         final VolatileLookupService service = new
             VolatileLookupService();
 
@@ -77,9 +83,9 @@ public class TestVolatileLookupService {
         expected.put("key2", "value2");
         expected.put("key3", "value3");
 
-        final Map<String, String> actual = service.getAll();
-        Assert.assertEquals(expected.size(), actual.size());
-        Assert.assertEquals(expected, actual);
+        final Map<String, String> actual = service.asMap();
+        assertEquals(expected.size(), actual.size());
+        assertEquals(expected, actual);
     }
 
     @Test
@@ -100,9 +106,9 @@ public class TestVolatileLookupService {
 
         service.putAll(expected);
 
-        final Map<String, String> actual = service.getAll();
-        Assert.assertEquals(expected.size(), actual.size());
-        Assert.assertEquals(expected, actual);
+        final Map<String, String> actual = service.asMap();
+        assertEquals(expected.size(), actual.size());
+        assertEquals(expected, actual);
     }
 
     @Test
@@ -117,17 +123,17 @@ public class TestVolatileLookupService {
         runner.assertValid(service);
 
         final String put1 = service.putIfAbsent("key1", "value1");
-        Assert.assertNull(put1);
+        assertNull(put1);
 
         final String get1 = service.get("key1");
-        Assert.assertEquals("value1", get1);
+        assertEquals("value1", get1);
 
         final String put2 = service.putIfAbsent("key1", "value2");
-        Assert.assertNotNull(put2);
-        Assert.assertEquals("value1", put2);
+        assertNotNull(put2);
+        assertEquals("value1", put2);
 
         final String get2 = service.get("key1");
-        Assert.assertEquals("value1", get2);
+        assertEquals("value1", get2);
     }
 
 }

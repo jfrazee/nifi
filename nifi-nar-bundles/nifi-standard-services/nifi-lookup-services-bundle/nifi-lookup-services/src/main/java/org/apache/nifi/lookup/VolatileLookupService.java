@@ -16,22 +16,23 @@
  */
 package org.apache.nifi.lookup;
 
-import org.apache.nifi.annotation.documentation.CapabilityDescription;
-import org.apache.nifi.annotation.documentation.Tags;
-import org.apache.nifi.annotation.lifecycle.OnDisabled;
-import org.apache.nifi.annotation.lifecycle.OnEnabled;
-import org.apache.nifi.components.PropertyDescriptor;
-import org.apache.nifi.controller.AbstractControllerService;
-import org.apache.nifi.controller.ConfigurationContext;
-import org.apache.nifi.processor.util.StandardValidators;
-import org.apache.nifi.reporting.InitializationException;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+
+import org.apache.nifi.annotation.documentation.CapabilityDescription;
+import org.apache.nifi.annotation.documentation.Tags;
+import org.apache.nifi.annotation.lifecycle.OnDisabled;
+import org.apache.nifi.annotation.lifecycle.OnEnabled;
+import org.apache.nifi.components.PropertyDescriptor;
+import org.apache.nifi.controller.AbstractControllerService;
+import org.apache.nifi.controller.ControllerServiceInitializationContext;
+import org.apache.nifi.controller.ConfigurationContext;
+import org.apache.nifi.processor.util.StandardValidators;
+import org.apache.nifi.reporting.InitializationException;
 
 @Tags({"lookup", "cache", "enrich", "join", "volatile"})
 @CapabilityDescription("An volatile, in-memory lookup service")
@@ -53,47 +54,53 @@ public class VolatileLookupService extends AbstractControllerService implements 
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
+        return properties;
+    }
+
+    @Override
+    protected void init(final ControllerServiceInitializationContext context) throws InitializationException {
         final List<PropertyDescriptor> properties = new ArrayList<>();
         properties.add(CAPACITY);
         this.properties = Collections.unmodifiableList(properties);
-        return properties;
     }
 
     @OnEnabled
     public void onEnabled(final ConfigurationContext context) throws InitializationException {
-        Integer capacity = context.getProperty(CAPACITY).asInteger();
+        final Integer capacity = context.getProperty(CAPACITY).asInteger();
         this.cache = new ConcurrentHashMap<>(capacity);
     }
 
     @OnDisabled
     public void shutdown() {
-        cache.clear();
-        this.cache = null;
+        if (cache != null) {
+            cache.clear();
+            this.cache = null;            
+        }
     }
 
     @Override
-    public String get(String id) {
-        return cache.get(id);
+    public String get(String key) {
+        return cache.get(key);
     }
 
     @Override
-    public String put(String id, String value) {
-        return cache.put(id, value);
+    public String put(String key, String value) {
+        return cache.put(key, value);
     }
 
     @Override
-    public String putIfAbsent(String id, String value) {
-        return cache.putIfAbsent(id, value);
-    }
-
-    @Override
-    public Map<String, String> getAll() {
-        return Collections.unmodifiableMap(cache);
+    public String putIfAbsent(String key, String value) {
+        return cache.putIfAbsent(key, value);
     }
 
     @Override
     public void putAll(Map<String, String> values) {
         cache.putAll(values);
+    }
+
+    @Override
+    public Map<String, String> asMap() {
+        return Collections.unmodifiableMap(cache);
     }
 
 }

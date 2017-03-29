@@ -35,6 +35,10 @@
             <version>1.9.3</version>
         </dependency>
         <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+        </dependency>        
+        <dependency>
             <groupId>org.apache.nifi</groupId>
             <artifactId>nifi-lookup-service-api</artifactId>
         </dependency>

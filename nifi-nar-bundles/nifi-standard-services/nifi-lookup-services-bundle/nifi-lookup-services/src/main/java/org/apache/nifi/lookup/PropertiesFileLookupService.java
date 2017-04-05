@@ -27,7 +27,6 @@ import java.util.Map;
 import org.apache.commons.configuration2.Configuration;
 import org.apache.commons.configuration2.ex.ConfigurationException;
 import org.apache.commons.configuration2.PropertiesConfiguration;
-import org.apache.commons.configuration2.PropertiesConfiguration;
 import org.apache.commons.configuration2.builder.ConfigurationBuilderEvent;
 import org.apache.commons.configuration2.builder.ReloadingFileBasedConfigurationBuilder;
 import org.apache.commons.configuration2.builder.fluent.Parameters;
@@ -46,7 +45,7 @@ import org.apache.nifi.controller.ConfigurationContext;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.reporting.InitializationException;
 
-@Tags({"lookup", "cache", "enrich", "join", "properties"})
+@Tags({"lookup", "cache", "enrich", "join", "properties", "reloadable"})
 @CapabilityDescription("A reloadable properties file-based lookup service")
 public class PropertiesFileLookupService extends AbstractControllerService implements LookupService {
 

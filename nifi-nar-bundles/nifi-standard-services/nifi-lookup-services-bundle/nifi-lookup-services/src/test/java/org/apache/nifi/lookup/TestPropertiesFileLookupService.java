@@ -49,22 +49,26 @@ public class TestPropertiesFileLookupService {
     public void testPropertiesFileLookupService() throws InitializationException {
         final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
         final PropertiesFileLookupService service = new PropertiesFileLookupService();
-        final Map<String, String> properties = new HashMap<>();
-        properties.put(PropertiesFileLookupService.PROPERTIES_FILE.getName(), "src/test/resources/test.properties");
 
-        runner.addControllerService("properties-file-lookup-service", service, properties);
+        runner.addControllerService("properties-file-lookup-service", service);
+        runner.setProperty(service, PropertiesFileLookupService.PROPERTIES_FILE, "src/test/resources/test.properties");
         runner.enableControllerService(service);
         runner.assertValid(service);
 
-        assertThat(service, instanceOf(LookupService.class));
+        final PropertiesFileLookupService lookupService =
+            (PropertiesFileLookupService) runner.getProcessContext()
+                .getControllerServiceLookup()
+                .getControllerService("properties-file-lookup-service");
 
-        final String property1 = service.get("property.1");
+        assertThat(lookupService, instanceOf(LookupService.class));
+
+        final String property1 = lookupService.get("property.1");
         assertEquals("this is property 1", property1);
 
-        final String property2 = service.get("property.2");
+        final String property2 = lookupService.get("property.2");
         assertEquals("this is property 2", property2);
 
-        final String property3 = service.get("property.3");
+        final String property3 = lookupService.get("property.3");
         assertNull(property3);
     }
 
@@ -72,16 +76,20 @@ public class TestPropertiesFileLookupService {
     public void testPropertiesFileLookupServiceAsMap() throws InitializationException {
         final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
         final PropertiesFileLookupService service = new PropertiesFileLookupService();
-        final Map<String, String> properties = new HashMap<>();
-        properties.put(PropertiesFileLookupService.PROPERTIES_FILE.getName(), "src/test/resources/test.properties");
 
-        runner.addControllerService("properties-file-lookup-service", service, properties);
+        runner.addControllerService("properties-file-lookup-service", service);
+        runner.setProperty(service, PropertiesFileLookupService.PROPERTIES_FILE, "src/test/resources/test.properties");
         runner.enableControllerService(service);
         runner.assertValid(service);
 
-        assertThat(service, instanceOf(LookupService.class));
+        final PropertiesFileLookupService lookupService =
+            (PropertiesFileLookupService) runner.getProcessContext()
+                .getControllerServiceLookup()
+                .getControllerService("properties-file-lookup-service");
 
-        final Map<String, String> actual = service.asMap();
+        assertThat(lookupService, instanceOf(LookupService.class));
+
+        final Map<String, String> actual = lookupService.asMap();
         final Map<String, String> expected = new HashMap<>();
         expected.put("property.1", "this is property 1");
         expected.put("property.2", "this is property 2");

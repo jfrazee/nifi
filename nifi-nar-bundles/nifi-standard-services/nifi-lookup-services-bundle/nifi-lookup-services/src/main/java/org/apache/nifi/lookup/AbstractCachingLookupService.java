@@ -21,6 +21,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -47,7 +48,7 @@ public abstract class AbstractCachingLookupService extends AbstractControllerSer
             .displayName("Cache size")
             .description("Maximum number of stylesheets to cache. Zero disables the cache.")
             .required(true)
-            .defaultValue("10")
+            .defaultValue("100")
             .addValidator(StandardValidators.NON_NEGATIVE_INTEGER_VALIDATOR)
             .build();
 
@@ -60,7 +61,7 @@ public abstract class AbstractCachingLookupService extends AbstractControllerSer
             .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR)
             .build();
 
-    protected List<PropertyDescriptor> properties;
+    private List<PropertyDescriptor> properties;
 
     private LoadingCache<String, String> cache;
 
@@ -89,8 +90,8 @@ public abstract class AbstractCachingLookupService extends AbstractControllerSer
 
             this.cache = cacheBuilder.build(
                new CacheLoader<String, String>() {
-                   public String load(String key) {
-                       return load(key);
+                   public String load(String key) throws ExecutionException {
+                       return AbstractCachingLookupService.this.load(key);
                    }
                });
         } else {
@@ -100,35 +101,43 @@ public abstract class AbstractCachingLookupService extends AbstractControllerSer
     }
 
     @OnDisabled
-    public void shutdown() {
+    public void onDisabled() {
         if (cache != null) {
             cache.invalidateAll();
             this.cache = null;
         }
     }
 
-    protected abstract String load(String key);
+    protected abstract String load(String key) throws ExecutionException;
 
     protected abstract Map<String, String> loadAll();
 
     @Override
     public String get(String key) {
-        if (cache != null) {
-            return cache.getIfPresent(key);
-        } else {
+        String result = null;
+        try {
+            if (cache != null) {
+                return cache.get(key);
+            }
             return load(key);
-        }
+        } catch (final ExecutionException e) {}
+        return null;
     }
 
     @Override
     public Map<String, String> asMap() {
-        final Map<String, String> map;
-        if (cache != null) {
-            map = cache.asMap();
-        } else {
-            map = loadAll();
+        // The semantics of this is a little funny. If you add to the database,
+        // it won't appear here until all the entries expire and the cache is
+        // empty. It might be useful to keep track of when the last time the
+        // entire thing was reloaded in the future.
+        if (cache != null && cache.size() <= 0) {
+            final Map<String, String> entries = loadAll();
+            if (entries != null) {
+                cache.putAll(entries);
+            }
+            return Collections.unmodifiableMap(cache.asMap());
         }
-        return Collections.unmodifiableMap(map);
+        return null;
     }
 
 }

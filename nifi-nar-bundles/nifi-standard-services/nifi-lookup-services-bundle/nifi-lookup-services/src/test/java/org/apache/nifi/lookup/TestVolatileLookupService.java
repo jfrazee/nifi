@@ -65,11 +65,9 @@ public class TestVolatileLookupService {
 
     @Test
     public void testVolatileLookupServiceAsMap() throws InitializationException {
-        final VolatileLookupService service = new
-            VolatileLookupService();
+        final VolatileLookupService service = new VolatileLookupService();
 
-        final TestRunner runner =
-            TestRunners.newTestRunner(TestProcessor.class);
+        final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
         runner.addControllerService("volatile-lookup-service", service);
         runner.enableControllerService(service);
         runner.assertValid(service);
@@ -90,11 +88,9 @@ public class TestVolatileLookupService {
 
     @Test
     public void testVolatileLookupServicePutAll() throws InitializationException {
-        final VolatileLookupService service = new
-            VolatileLookupService();
+        final VolatileLookupService service = new VolatileLookupService();
 
-        final TestRunner runner =
-            TestRunners.newTestRunner(TestProcessor.class);
+        final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
         runner.addControllerService("volatile-lookup-service", service);
         runner.enableControllerService(service);
         runner.assertValid(service);
@@ -134,6 +130,53 @@ public class TestVolatileLookupService {
 
         final String get2 = service.get("key1");
         assertEquals("value1", get2);
+    }
+
+    @Test
+    public void testVolatileLookupServiceWithDynamicProperties() throws InitializationException {
+        final VolatileLookupService service = new VolatileLookupService();
+
+        final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
+        runner.addControllerService("volatile-lookup-service", service);
+        runner.setProperty(service, "key1", "value1");
+        runner.enableControllerService(service);
+        runner.assertValid(service);
+
+        assertThat(service, instanceOf(MutableLookupService.class));
+
+        final String get1 = service.get("key1");
+        assertEquals("value1", get1);
+
+        final String put2 = service.put("key1", "value2");
+        assertEquals("value1", put2);
+
+        final String get2 = service.get("key1");
+        assertEquals("value2", get2);
+
+        final String get3 = service.get("key3");
+        assertNull(get3);
+    }
+
+    @Test
+    public void testVolatileLookupServiceWithDynamicPropertiesAsMap() throws InitializationException {
+        final VolatileLookupService service = new VolatileLookupService();
+
+        final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
+        runner.addControllerService("volatile-lookup-service", service);
+        runner.setProperty(service, "key1", "value1");
+        runner.setProperty(service, "key2", "value2");
+        runner.setProperty(service, "key3", "value3");
+        runner.enableControllerService(service);
+        runner.assertValid(service);
+
+        final Map<String, String> expected = new HashMap<>();
+        expected.put("key1", "value1");
+        expected.put("key2", "value2");
+        expected.put("key3", "value3");
+
+        final Map<String, String> actual = service.asMap();
+        assertEquals(expected.size(), actual.size());
+        assertEquals(expected, actual);
     }
 
 }

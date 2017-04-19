@@ -23,6 +23,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 import org.apache.nifi.lookup.LookupService;
 import org.apache.nifi.lookup.VolatileLookupService;
@@ -39,19 +41,17 @@ public class TestLookupAttribute {
 
     @Test
     public void testLookupAttribute() throws InitializationException {
-        final VolatileLookupService service =
-            new VolatileLookupService();
+        final VolatileLookupService service = new VolatileLookupService();
 
         final TestRunner runner = TestRunners.newTestRunner(new LookupAttribute());
         runner.addControllerService("volatile-lookup-service", service);
-        runner.setProperty(service, VolatileLookupService.LOOKUP_SERVICE_CAPACITY.getName(), "10");
+        runner.setProperty(service, VolatileLookupService.CAPACITY.getName(), "10");
+        runner.setProperty(service, "key1", "value1");
+        runner.setProperty(service, "key2", "value2");
+        runner.setProperty(service, "key3", "value3");
         runner.enableControllerService(service);
         runner.assertValid(service);
         runner.setProperty(LookupAttribute.LOOKUP_SERVICE, "volatile-lookup-service");
-
-        service.put("key1", "value1");
-        service.put("key2", "value2");
-        service.put("key3", "value3");
 
         runner.enqueue("some content".getBytes());
         runner.run(1, false);
@@ -63,20 +63,48 @@ public class TestLookupAttribute {
         flowFile.assertAttributeExists("key1");
         flowFile.assertAttributeExists("key2");
         flowFile.assertAttributeExists("key3");
+        flowFile.assertAttributeNotExists("key4");
 
         flowFile.assertAttributeEquals("key1", "value1");
         flowFile.assertAttributeEquals("key2", "value2");
         flowFile.assertAttributeEquals("key3", "value3");
     }
 
-    @Ignore
     @Test
     public void testLookupAttributeWithDynamicProperties() throws InitializationException {
-    }
+        final VolatileLookupService service = new VolatileLookupService();
 
-    @Ignore
-    @Test
-    public void testLookupAttributeWithPropertiesFileLookupService() throws InitializationException {
+        final TestRunner runner = TestRunners.newTestRunner(new LookupAttribute());
+        runner.addControllerService("volatile-lookup-service", service);
+        runner.setProperty(service, VolatileLookupService.CAPACITY.getName(), "10");
+        runner.setProperty(service, "key1", "value1");
+        runner.setProperty(service, "key2", "value2");
+        runner.setProperty(service, "key3", "value3");
+        runner.enableControllerService(service);
+        runner.assertValid(service);
+        runner.setProperty(LookupAttribute.LOOKUP_SERVICE, "volatile-lookup-service");
+        runner.setProperty("foo", "key1");
+        runner.setProperty("bar", "key2");
+        runner.setProperty("baz", "${attr1}");
+
+        final Map<String, String> attributes = new HashMap<>();
+        attributes.put("attr1", "key3");
+
+        runner.enqueue("some content".getBytes(), attributes);
+        runner.run(1, false);
+
+        final MockFlowFile flowFile = runner.getFlowFilesForRelationship(LookupAttribute.REL_SUCCESS).get(0);
+
+        Assert.assertNotNull(flowFile);
+
+        flowFile.assertAttributeExists("foo");
+        flowFile.assertAttributeExists("bar");
+        flowFile.assertAttributeExists("baz");
+        flowFile.assertAttributeNotExists("qux");
+
+        flowFile.assertAttributeEquals("foo", "value1");
+        flowFile.assertAttributeEquals("bar", "value2");
+        flowFile.assertAttributeEquals("baz", "value3");
     }
 
 }

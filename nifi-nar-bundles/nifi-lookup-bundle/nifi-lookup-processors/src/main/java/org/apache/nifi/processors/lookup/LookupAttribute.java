@@ -54,8 +54,7 @@ import java.util.Set;
 @InputRequirement(Requirement.INPUT_REQUIRED)
 @Tags({"lookup", "cache", "enrich", "join", "mutable", "attributes", "Attribute Expression Language"})
 @CapabilityDescription("Lookup attributes from a lookup service")
-@DynamicProperty(name = "The name of the attribute to add to the FlowFile", value = "The name of the key or property to lookup from the lookup table", supportsExpressionLanguage = true,
-        description = "Adds a FlowFile attribute specified by the Dynamic Property's key with the value found in the lookup table using the the Dynamic Property's value")
+@DynamicProperty(name = "The name of the attribute to add to the FlowFile", value = "The name of the key or property to retrieve from the lookup service", supportsExpressionLanguage = true, description = "Adds a FlowFile attribute specified by the dynamic property's key with the value found in the lookup service using the the dynamic property's value")
 @WritesAttribute(attribute = "See additional details", description = "This processor may write zero or more attributes as described in additional details")
 public class LookupAttribute extends AbstractProcessor {
 
@@ -163,7 +162,7 @@ public class LookupAttribute extends AbstractProcessor {
         boolean notMatched = false;
         if (dynamicProperties.isEmpty()) {
             // If there aren't any dynamic properties, load the entire lookup table
-            final Map<String, String> lookupTable = lookupService.getAll();
+            final Map<String, String> lookupTable = lookupService.asMap();
             if (logger.isDebugEnabled() && lookupTable.isEmpty()) {
                 logger.debug("No dynamic properties provided and lookup table is empty");
             }

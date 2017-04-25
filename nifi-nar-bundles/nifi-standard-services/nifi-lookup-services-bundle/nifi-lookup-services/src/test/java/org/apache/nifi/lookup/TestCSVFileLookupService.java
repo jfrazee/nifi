@@ -43,22 +43,24 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertThat;
 
-public class TestPropertiesFileLookupService {
+public class TestCSVFileLookupService {
 
     @Test
-    public void testPropertiesFileLookupService() throws InitializationException {
+    public void testCSVFileLookupService() throws InitializationException, IOException {
         final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
-        final PropertiesFileLookupService service = new PropertiesFileLookupService();
+        final CSVFileLookupService service = new CSVFileLookupService();
 
-        runner.addControllerService("properties-file-lookup-service", service);
-        runner.setProperty(service, PropertiesFileLookupService.CONFIGURATION_FILE, "src/test/resources/test.properties");
+        runner.addControllerService("csv-file-lookup-service", service);
+        runner.setProperty(service, CSVFileLookupService.CSV_FILE, "src/test/resources/test.csv");
+        runner.setProperty(service, CSVFileLookupService.LOOKUP_KEY_COLUMN, "key");
+        runner.setProperty(service, CSVFileLookupService.LOOKUP_VALUE_COLUMN, "value");
         runner.enableControllerService(service);
         runner.assertValid(service);
 
-        final PropertiesFileLookupService lookupService =
-            (PropertiesFileLookupService) runner.getProcessContext()
+        final CSVFileLookupService lookupService =
+            (CSVFileLookupService) runner.getProcessContext()
                 .getControllerServiceLookup()
-                .getControllerService("properties-file-lookup-service");
+                .getControllerService("csv-file-lookup-service");
 
         assertThat(lookupService, instanceOf(LookupService.class));
 
@@ -73,19 +75,21 @@ public class TestPropertiesFileLookupService {
     }
 
     @Test
-    public void testPropertiesFileLookupServiceAsMap() throws InitializationException {
+    public void testCSVFileLookupServiceAsMap() throws InitializationException, IOException {
         final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
-        final PropertiesFileLookupService service = new PropertiesFileLookupService();
+        final CSVFileLookupService service = new CSVFileLookupService();
 
-        runner.addControllerService("properties-file-lookup-service", service);
-        runner.setProperty(service, PropertiesFileLookupService.CONFIGURATION_FILE, "src/test/resources/test.properties");
+        runner.addControllerService("csv-file-lookup-service", service);
+        runner.setProperty(service, CSVFileLookupService.CSV_FILE, "src/test/resources/test.csv");
+        runner.setProperty(service, CSVFileLookupService.LOOKUP_KEY_COLUMN, "key");
+        runner.setProperty(service, CSVFileLookupService.LOOKUP_VALUE_COLUMN, "value");
         runner.enableControllerService(service);
         runner.assertValid(service);
 
-        final PropertiesFileLookupService lookupService =
-            (PropertiesFileLookupService) runner.getProcessContext()
+        final CSVFileLookupService lookupService =
+            (CSVFileLookupService) runner.getProcessContext()
                 .getControllerServiceLookup()
-                .getControllerService("properties-file-lookup-service");
+                .getControllerService("csv-file-lookup-service");
 
         assertThat(lookupService, instanceOf(LookupService.class));
 

@@ -25,8 +25,8 @@ import org.apache.nifi.controller.ControllerService;
 @CapabilityDescription("Lookup service")
 public interface LookupService extends ControllerService {
 
-    String get(String key);
+    String get(String key) throws Exception;
 
-    Map<String, String> asMap();
+    Map<String, String> asMap() throws Exception;
 
 }

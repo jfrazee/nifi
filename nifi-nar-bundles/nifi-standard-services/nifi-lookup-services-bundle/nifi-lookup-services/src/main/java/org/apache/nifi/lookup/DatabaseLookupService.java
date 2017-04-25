@@ -50,7 +50,7 @@ import org.apache.nifi.reporting.InitializationException;
 
 @Tags({"lookup", "cache", "enrich", "join", "jdbc", "database"})
 @CapabilityDescription("A reloadable properties file-based lookup service")
-public class DatabaseLookupService extends AbstractCachingLookupService {
+public class DatabaseLookupService extends AbstractCachingLookupService implements LookupService {
 
     static final PropertyDescriptor CONNECTION_POOL = new PropertyDescriptor.Builder()
         .name("connection-pool")
@@ -69,32 +69,45 @@ public class DatabaseLookupService extends AbstractCachingLookupService {
         .expressionLanguageSupported(true)
         .build();
 
-    static final PropertyDescriptor LOOKUP_KEY_COLUMN = new PropertyDescriptor.Builder()
-        .name("lookup-key-column")
-        .displayName("Lookup Key Column")
-        .description("Lookup key column.")
-        .required(true)
-        .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-        .expressionLanguageSupported(true)
-        .build();
+    static final PropertyDescriptor LOOKUP_KEY_COLUMN =
+        new PropertyDescriptor.Builder()
+            .name("lookup-key-column")
+            .displayName("Lookup Key Column")
+            .description("Lookup key column.")
+            .required(true)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .expressionLanguageSupported(true)
+            .build();
 
-    static final PropertyDescriptor LOOKUP_VALUE_COLUMN = new PropertyDescriptor.Builder()
-        .name("lookup-value-column")
-        .displayName("Lookup Value Column")
-        .description("Lookup value column.")
-        .required(true)
-        .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-        .expressionLanguageSupported(true)
-        .build();
+    static final PropertyDescriptor LOOKUP_VALUE_COLUMN =
+        new PropertyDescriptor.Builder()
+            .name("lookup-value-column")
+            .displayName("Lookup Value Column")
+            .description("Lookup value column.")
+            .required(true)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .expressionLanguageSupported(true)
+            .build();
 
-    static final PropertyDescriptor LOOKUP_NAME_COLUMN = new PropertyDescriptor.Builder()
-        .name("lookup-name-column")
-        .displayName("Lookup Name Column")
-        .description("Lookup name column.")
-        .required(false)
-        .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-        .expressionLanguageSupported(true)
-        .build();
+    static final PropertyDescriptor LOOKUP_NAME_COLUMN =
+        new PropertyDescriptor.Builder()
+            .name("lookup-name-column")
+            .displayName("Lookup Name Column")
+            .description("Lookup name column.")
+            .required(false)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .expressionLanguageSupported(true)
+            .build();
+
+    static final PropertyDescriptor LOOKUP_NAME =
+        new PropertyDescriptor.Builder()
+            .name("lookup-name")
+            .displayName("Lookup Name")
+            .description("Lookup name.")
+            .required(false)
+            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+            .expressionLanguageSupported(true)
+            .build();
 
     private List<PropertyDescriptor> properties;
 
@@ -125,6 +138,7 @@ public class DatabaseLookupService extends AbstractCachingLookupService {
         properties.add(LOOKUP_KEY_COLUMN);
         properties.add(LOOKUP_VALUE_COLUMN);
         properties.add(LOOKUP_NAME_COLUMN);
+        properties.add(LOOKUP_NAME);
         this.properties = Collections.unmodifiableList(properties);
     }
 
@@ -138,6 +152,7 @@ public class DatabaseLookupService extends AbstractCachingLookupService {
         final String lookupKeyColumn = context.getProperty(LOOKUP_KEY_COLUMN).getValue();
         final String lookupValueColumn = context.getProperty(LOOKUP_VALUE_COLUMN).getValue();
         final String lookupNameColumn = context.getProperty(LOOKUP_NAME_COLUMN).getValue();
+        final String lookupName = context.getProperty(LOOKUP_NAME).getValue();
 
         DatabaseBuilderParameters parameters = new Parameters().database();
         parameters = parameters.setDataSource(dataSource)
@@ -145,8 +160,8 @@ public class DatabaseLookupService extends AbstractCachingLookupService {
             .setKeyColumn(lookupKeyColumn)
             .setValueColumn(lookupValueColumn);
 
-        if (!StringUtils.isBlank(lookupNameColumn)) {
-            parameters = parameters.setConfigurationNameColumn(lookupNameColumn);
+        if (StringUtils.isNotBlank(lookupNameColumn)) {
+            parameters = parameters.setConfigurationNameColumn(lookupNameColumn).setConfigurationName(lookupName);
         }
 
         this.builder = new BasicConfigurationBuilder<>(DatabaseConfiguration.class);

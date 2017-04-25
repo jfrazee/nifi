@@ -98,7 +98,7 @@ public class VolatileLookupService extends AbstractControllerService implements 
     }
 
     @OnDisabled
-    public void shutdown() {
+    public void onDisabled() {
         if (cache != null) {
             cache.clear();
             this.cache = null;

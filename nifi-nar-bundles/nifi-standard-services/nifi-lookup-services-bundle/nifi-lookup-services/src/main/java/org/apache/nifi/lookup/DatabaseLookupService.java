@@ -17,6 +17,7 @@
 package org.apache.nifi.lookup;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -50,7 +51,7 @@ import org.apache.nifi.reporting.InitializationException;
 
 @Tags({"lookup", "cache", "enrich", "join", "jdbc", "database"})
 @CapabilityDescription("A reloadable properties file-based lookup service")
-public class DatabaseLookupService extends AbstractCachingLookupService implements LookupService {
+public class DatabaseLookupService extends AbstractControllerService implements LookupService {
 
     static final PropertyDescriptor CONNECTION_POOL = new PropertyDescriptor.Builder()
         .name("connection-pool")
@@ -143,9 +144,7 @@ public class DatabaseLookupService extends AbstractCachingLookupService implemen
     }
 
     @OnEnabled
-    public void onEnabled(final ConfigurationContext context) throws InitializationException {
-        super.onEnabled(context);
-
+    public void onEnabled(final ConfigurationContext context) throws InitializationException, ExecutionException {
         final DBCPService databaseService = context.getProperty(CONNECTION_POOL).asControllerService(DBCPService.class);
         final DataSource dataSource = databaseService.getDataSource();
         final String lookupTableName = context.getProperty(LOOKUP_TABLE_NAME).getValue();
@@ -170,11 +169,10 @@ public class DatabaseLookupService extends AbstractCachingLookupService implemen
 
     @OnDisabled
     public void onDisabled() {
-        super.onDisabled();
         this.builder = null;
     }
 
-    protected String load(String key) throws ExecutionException {
+    public String get(String key) throws IOException {
         final Configuration config = getConfiguration();
         if (config != null) {
             final Object value = config.getProperty(key);
@@ -182,10 +180,10 @@ public class DatabaseLookupService extends AbstractCachingLookupService implemen
                 return String.valueOf(value);
             }
         }
-        throw new ExecutionException("Couldn't load value for key: " + key, null);
+        return null;
     }
 
-    protected Map<String, String> loadAll() {
+    public Map<String, String> asMap() throws IOException {
         final Configuration config = getConfiguration();
         final Map<String, String> properties = new HashMap<>();
         if (config != null) {

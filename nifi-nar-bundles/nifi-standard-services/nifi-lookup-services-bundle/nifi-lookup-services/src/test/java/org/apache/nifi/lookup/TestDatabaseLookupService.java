@@ -60,26 +60,7 @@ public class TestDatabaseLookupService {
     }
 
     @Test
-    public void testDatabaseLookupService() throws InitializationException, SQLException {
-        testDatabaseLookupService(100);
-    }
-
-    @Test
-    public void testDatabaseLookupServiceWithoutCache() throws InitializationException, SQLException {
-        testDatabaseLookupService(0);
-    }
-
-    @Test
-    public void testDatabaseLookupServiceAsMap() throws InitializationException, SQLException {
-        testDatabaseLookupService(100);
-    }
-
-    @Test
-    public void testDatabaseLookupServiceAsMapWithoutCache() throws InitializationException, SQLException {
-        testDatabaseLookupService(0);
-    }
-
-    private void testDatabaseLookupService(int cacheSize) throws InitializationException, SQLException {
+    public void testDatabaseLookupService() throws InitializationException, IOException, SQLException {
         final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
         final DBCPConnectionPool pool = new DBCPConnectionPool();
         final DatabaseLookupService service = new DatabaseLookupService();
@@ -97,7 +78,6 @@ public class TestDatabaseLookupService {
 
         runner.addControllerService("database-lookup-service", service);
         runner.setProperty(service, DatabaseLookupService.CONNECTION_POOL, "connection-pool");
-        runner.setProperty(service, DatabaseLookupService.CACHE_SIZE, String.valueOf(cacheSize));
         runner.setProperty(service, DatabaseLookupService.LOOKUP_TABLE_NAME, "test");
         runner.setProperty(service, DatabaseLookupService.LOOKUP_KEY_COLUMN, "name");
         runner.setProperty(service, DatabaseLookupService.LOOKUP_VALUE_COLUMN, "value");
@@ -125,28 +105,18 @@ public class TestDatabaseLookupService {
 
         update(pool);
 
-        if (cacheSize > 0) {
-            final String updated1 = lookupService.get("property.1");
-            assertEquals("this is property 1", updated1);
+        final String updated1 = lookupService.get("property.1");
+        assertEquals("this is property 1 updated", updated1);
 
-            final String updated2 = lookupService.get("property.2");
-            assertEquals("this is property 2", updated2);
+        final String updated2 = lookupService.get("property.2");
+        assertEquals("this is property 2", updated2);
 
-            final String updated3 = lookupService.get("property.3");
-            assertEquals("this is property 3", updated3);
-        } else {
-            final String updated1 = lookupService.get("property.1");
-            assertEquals("this is property 1 updated", updated1);
-
-            final String updated2 = lookupService.get("property.2");
-            assertEquals("this is property 2", updated2);
-
-            final String updated3 = lookupService.get("property.3");
-            assertEquals("this is property 3", updated3);
-        }
+        final String updated3 = lookupService.get("property.3");
+        assertEquals("this is property 3", updated3);
     }
 
-    private void testDatabaseLookupServiceAsMap(int cacheSize) throws InitializationException, SQLException {
+    @Test
+    public void testDatabaseLookupServiceAsMap() throws InitializationException, IOException, SQLException {
         final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
         final DBCPConnectionPool pool = new DBCPConnectionPool();
         final DatabaseLookupService service = new DatabaseLookupService();
@@ -164,7 +134,6 @@ public class TestDatabaseLookupService {
 
         runner.addControllerService("database-lookup-service", service);
         runner.setProperty(service, DatabaseLookupService.CONNECTION_POOL, "connection-pool");
-        runner.setProperty(service, DatabaseLookupService.CACHE_SIZE, String.valueOf(cacheSize));
         runner.setProperty(service, DatabaseLookupService.LOOKUP_TABLE_NAME, "test");
         runner.setProperty(service, DatabaseLookupService.LOOKUP_KEY_COLUMN, "name");
         runner.setProperty(service, DatabaseLookupService.LOOKUP_VALUE_COLUMN, "value");
@@ -189,26 +158,13 @@ public class TestDatabaseLookupService {
 
         update(pool);
 
-        if (cacheSize > 0) {
-            actual.clear();
-            actual.putAll(lookupService.asMap());
+        actual.clear();
+        actual.putAll(lookupService.asMap());
 
-            expected.clear();
-            expected.put("property.1", "this is property 1");
-            expected.put("property.2", "this is property 2");
-
-            assertEquals(expected, actual);
-        } else {
-            actual.clear();
-            actual.putAll(lookupService.asMap());
-
-            expected.clear();
-            expected.put("property.1", "this is property 1 updated");
-            expected.put("property.2", "this is property 2");
-            expected.put("property.3", "this is property 3");
-
-            assertEquals(expected, actual);
-        }
+        expected.clear();
+        expected.put("property.1", "this is property 1 updated");
+        expected.put("property.2", "this is property 2");
+        expected.put("property.3", "this is property 3");
     }
 
     private void setup(DBCPService pool) throws SQLException {

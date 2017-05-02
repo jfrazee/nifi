@@ -20,6 +20,10 @@ import java.util.Map;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
 
+/**
+ * This interface defines a mutable {@link LookupService}.
+ *
+ */
 @Tags({"lookup", "cache", "enrich", "join", "mutable"})
 @CapabilityDescription("Mutable lookup service")
 public interface MutableLookupService extends LookupService {

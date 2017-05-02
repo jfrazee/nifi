@@ -47,6 +47,11 @@ import org.apache.nifi.controller.ConfigurationContext;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.reporting.InitializationException;
 
+/**
+ * This abstract class defines a generic {@link LookupService} backed by an
+ * Apache Commons Configuration {@link FileBasedConfiguration}.
+ *
+ */
 @Tags({"lookup", "cache", "enrich", "join", "reloadable"})
 @CapabilityDescription("A reloadable Apache Commons Configuration file-based lookup service")
 public abstract class CommonsConfigurationLookupService<T extends FileBasedConfiguration> extends AbstractControllerService implements LookupService {
@@ -126,17 +131,16 @@ public abstract class CommonsConfigurationLookupService<T extends FileBasedConfi
     @Override
     public Map<String, String> asMap() {
         final Configuration config = getConfiguration();
+        final Map<String, String> properties = new HashMap<>();
         if (config != null) {
-            final Map<String, String> properties = new HashMap<>();
             final Iterator<String> keys = config.getKeys();
             while (keys.hasNext()) {
                 final String key = keys.next();
                 final Object value = config.getProperty(key);
                 properties.put(key, String.valueOf(value));
             }
-            return Collections.unmodifiableMap(properties);
         }
-        return null;
+        return Collections.unmodifiableMap(properties);
     }
 
 }

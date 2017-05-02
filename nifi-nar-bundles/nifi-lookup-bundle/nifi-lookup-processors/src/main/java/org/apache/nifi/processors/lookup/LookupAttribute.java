@@ -16,6 +16,18 @@
  */
 package org.apache.nifi.processors.lookup;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+// import java.util.concurrent.ExecutionException;
+
 import org.apache.nifi.annotation.behavior.DynamicProperty;
 import org.apache.nifi.annotation.behavior.EventDriven;
 import org.apache.nifi.annotation.behavior.InputRequirement;
@@ -40,13 +52,9 @@ import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 
 @EventDriven
 @SideEffectFree
@@ -65,6 +73,33 @@ public class LookupAttribute extends AbstractProcessor {
             .description("The lookup service to use for attribute lookups")
             .identifiesControllerService(LookupService.class)
             .required(true)
+            .build();
+
+    public static final PropertyDescriptor CACHE_SIZE = new PropertyDescriptor.Builder()
+            .name("cache-size")
+            .displayName("Cache size")
+            .description("Maximum number of lookup entries to cache. Zero disables the cache.")
+            .required(true)
+            .defaultValue("0")
+            .addValidator(StandardValidators.NON_NEGATIVE_INTEGER_VALIDATOR)
+            .build();
+
+    public static final PropertyDescriptor CACHE_NULLS = new PropertyDescriptor.Builder()
+            .name("cache-nulls")
+            .displayName("Cache nulls")
+            .description("Store null values in the cache.")
+            .required(true)
+            .defaultValue("true")
+            .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
+            .build();
+
+    public static final PropertyDescriptor CACHE_EXPIRE_AFTER_WRITE = new PropertyDescriptor.Builder()
+            .name("cache-expire-after-write")
+            .displayName("Cache TTL after write")
+            .description("The cache TTL (time-to-live) or how long to keep keys after they're loaded.")
+            .required(true)
+            .defaultValue("60 secs")
+            .addValidator(StandardValidators.TIME_PERIOD_VALIDATOR)
             .build();
 
     public static final PropertyDescriptor INCLUDE_NULL_VALUES =
@@ -94,6 +129,8 @@ public class LookupAttribute extends AbstractProcessor {
 
     private Map<PropertyDescriptor, PropertyValue> dynamicProperties;
 
+    private LoadingCache<String, Optional<String>> cache;
+
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
         return descriptors;
@@ -120,6 +157,9 @@ public class LookupAttribute extends AbstractProcessor {
     protected void init(final ProcessorInitializationContext context) {
         final List<PropertyDescriptor> descriptors = new ArrayList<PropertyDescriptor>();
         descriptors.add(LOOKUP_SERVICE);
+        descriptors.add(CACHE_SIZE);
+        descriptors.add(CACHE_NULLS);
+        descriptors.add(CACHE_EXPIRE_AFTER_WRITE);
         descriptors.add(INCLUDE_NULL_VALUES);
         this.descriptors = Collections.unmodifiableList(descriptors);
 
@@ -141,31 +181,76 @@ public class LookupAttribute extends AbstractProcessor {
             }
         }
         this.dynamicProperties = Collections.unmodifiableMap(dynamicProperties);
+
+        // Initialize the cache, if needed
+        final Integer cacheSize = context.getProperty(CACHE_SIZE).asInteger();
+        if (cacheSize > 0) {
+            final ComponentLog logger = getLogger();
+            final LookupService lookupService = context.getProperty(LOOKUP_SERVICE).asControllerService(LookupService.class);
+            final boolean cacheNulls = context.getProperty(CACHE_NULLS).asBoolean();
+            final Long cacheExpire = context.getProperty(CACHE_EXPIRE_AFTER_WRITE).asTimePeriod(TimeUnit.SECONDS);
+            CacheBuilder cacheBuilder = CacheBuilder.newBuilder().maximumSize(cacheSize);
+
+            if (cacheExpire > 0) {
+                cacheBuilder = cacheBuilder.expireAfterWrite(cacheExpire, TimeUnit.SECONDS);
+            }
+
+            this.cache = cacheBuilder.build(
+               new CacheLoader<String, Optional<String>>() {
+                   public String load(String key) throws IOException {
+                       final String value = lookupService.get(key);
+                       if (value == null) {
+                           if (!cacheNulls) {
+                               throw new ExecutionException("Entry null or not found for key: " + key);
+                           } else if (logger.isDebugEnabled()) {
+                               logger.debug("Entry null or not found for key: " + key);
+                           }
+                       }
+                       return Optional.ofNullable(value);
+                   }
+               });
+        } else {
+            this.cache = null;
+            getLogger().warn("Lookup service cache disabled because cache size is set to 0");
+        }
     }
 
     @Override
     public void onTrigger(ProcessContext context, ProcessSession session) throws ProcessException {
         final ComponentLog logger = getLogger();
-        final LookupService lookupService = context.getProperty(LOOKUP_SERVICE)
-            .asControllerService(LookupService.class);
-        final boolean includeNullValues =
-            context.getProperty(INCLUDE_NULL_VALUES).asBoolean();
+        final LookupService lookupService = context.getProperty(LOOKUP_SERVICE).asControllerService(LookupService.class);
+        final boolean includeNullValues = context.getProperty(INCLUDE_NULL_VALUES).asBoolean();
         for (FlowFile flowFile : session.get(50)) {
-            doOnTrigger(logger, lookupService, includeNullValues, flowFile, session);
+            try {
+                doOnTrigger(logger, lookupService, includeNullValues, flowFile, session);
+            } catch (final IOException e) {
+                throw new ProcessException(e.getMessage(), e);
+            }
         }
     }
 
     private void doOnTrigger(ComponentLog logger, LookupService lookupService, boolean includeNullValues, FlowFile flowFile, ProcessSession session)
-            throws ProcessException {
+            throws ProcessException, IOException {
         final Map<String, String> attributes = new HashMap<>(flowFile.getAttributes());
 
         boolean notMatched = false;
         if (dynamicProperties.isEmpty()) {
             // If there aren't any dynamic properties, load the entire lookup table
-            final Map<String, String> lookupTable = lookupService.asMap();
+            final Map<String, String> lookupTable;
+            if (cache != null) {
+                lookupTable = cache.asMap()
+                    .entrySet()
+                    .parallelStream()
+                    .filter(e -> e.getValue() != null && e.getValue().isPresent())
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue::get));
+            } else {
+                lookupTable = lookupService.asMap();
+            }
+
             if (logger.isDebugEnabled() && lookupTable.isEmpty()) {
                 logger.debug("No dynamic properties provided and lookup table is empty");
             }
+
             for (final Map.Entry<String, String> e : lookupTable.entrySet()) {
                 final String attributeName = e.getKey();
                 final String attributeValue = e.getValue();
@@ -177,7 +262,13 @@ public class LookupAttribute extends AbstractProcessor {
                 final PropertyValue lookupKeyExpression = e.getValue();
                 final String lookupKey = lookupKeyExpression.evaluateAttributeExpressions(flowFile).getValue();
                 final String attributeName = e.getKey().getName();
-                final String attributeValue = lookupService.get(lookupKey);
+                final String attributeValue;
+                if (cache != null) {
+                    attributeValue = cache.get(lookupKey).orElse(lookupService.get(lookupKey));
+                } else {
+                    attributeValue = lookupService.get(lookupKey);
+                }
+
                 if (attributeValue != null) {
                     attributes.put(attributeName, attributeValue);
                 } else if (includeNullValues) {

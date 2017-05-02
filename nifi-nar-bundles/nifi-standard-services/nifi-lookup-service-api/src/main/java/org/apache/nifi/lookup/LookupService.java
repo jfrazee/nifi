@@ -16,17 +16,42 @@
  */
 package org.apache.nifi.lookup;
 
+import java.io.IOException;
 import java.util.Map;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.controller.ControllerService;
 
+/**
+ * This interface defines an API that can be used for interacting with a
+ * a lookup table. LookupService is used by {@link LookupAttribute} to enrich
+ * FlowFiles with attributes from a reference dataset, database or cache.
+ *
+ */
 @Tags({"lookup", "cache", "enrich", "join"})
 @CapabilityDescription("Lookup service")
 public interface LookupService extends ControllerService {
 
-    String get(String key) throws Exception;
+    /**
+     * Returns the value in the lookup table for the given key, if one exists;
+     * otherwise returns <code>null</code>
+     *
+     * @param key the key to lookup
+     *
+     * @return the value in the backing service for the given key, if
+     * one exists; otherwise returns <code>null</code>
+     * @throws IOException if the backing service is unavailable or the table
+     * cannot be loaded
+     */
+    String get(String key) throws IOException;
 
-    Map<String, String> asMap() throws Exception;
+    /**
+     * Returns the entire lookup table as a {@link Map}
+     *
+     * @return the lookup table stored in the backing service
+     * @throws IOException if the backing service is unavailable or the table
+     * cannot be loaded
+     */
+    Map<String, String> asMap() throws IOException;
 
 }

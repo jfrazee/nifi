@@ -150,21 +150,20 @@ public class TestDatabaseLookupService {
 
         setup(pool);
 
-        final Map<String, String> actual = lookupService.asMap();
-        final Map<String, String> expected = new HashMap<>();
-        expected.put("property.1", "this is property 1");
-        expected.put("property.2", "this is property 2");
-        assertEquals(expected, actual);
+        final Map<String, String> actual1 = lookupService.asMap();
+        final Map<String, String> expected1 = new HashMap<>();
+        expected1.put("property.1", "this is property 1");
+        expected1.put("property.2", "this is property 2");
+        assertEquals(expected1, actual1);
 
         update(pool);
 
-        actual.clear();
-        actual.putAll(lookupService.asMap());
-
-        expected.clear();
-        expected.put("property.1", "this is property 1 updated");
-        expected.put("property.2", "this is property 2");
-        expected.put("property.3", "this is property 3");
+        final Map<String, String> actual2 = lookupService.asMap();
+        final Map<String, String> expected2 = new HashMap<>();
+        expected2.put("property.1", "this is property 1 updated");
+        expected2.put("property.2", "this is property 2");
+        expected2.put("property.3", "this is property 3");
+        assertEquals(expected2, actual2);
     }
 
     private void setup(DBCPService pool) throws SQLException {

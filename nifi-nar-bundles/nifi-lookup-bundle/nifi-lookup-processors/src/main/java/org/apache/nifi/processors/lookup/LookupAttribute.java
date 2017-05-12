@@ -236,15 +236,7 @@ public class LookupAttribute extends AbstractProcessor {
         boolean notMatched = false;
         if (dynamicProperties.isEmpty()) {
             // If there aren't any dynamic properties, load the entire lookup table
-            final Map<String, String> lookupTable;
-            if (cache != null) {
-                lookupTable = cache.asMap()
-                    .entrySet()
-                    .parallelStream()
-                    .filter(e -> e.getValue() != null && e.getValue().isPresent())
-                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue::get));
-            } else {
-                lookupTable = lookupService.asMap();
+            final Map<String, String> lookupTable = lookupService.asMap();
             }
 
             if (logger.isDebugEnabled() && lookupTable.isEmpty()) {
@@ -262,13 +254,7 @@ public class LookupAttribute extends AbstractProcessor {
                 final PropertyValue lookupKeyExpression = e.getValue();
                 final String lookupKey = lookupKeyExpression.evaluateAttributeExpressions(flowFile).getValue();
                 final String attributeName = e.getKey().getName();
-                final String attributeValue;
-                if (cache != null) {
-                    attributeValue = cache.get(lookupKey).orElse(lookupService.get(lookupKey));
-                } else {
-                    attributeValue = lookupService.get(lookupKey);
-                }
-
+                final String attributeValue = lookupService.get(lookupKey);
                 if (attributeValue != null) {
                     attributes.put(attributeName, attributeValue);
                 } else if (includeNullValues) {

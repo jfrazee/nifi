@@ -66,9 +66,9 @@ public class TestLookupAttribute {
 
         runner.enqueue("some content".getBytes(), attributes);
         runner.run(1, false);
-        runner.assertAllFlowFilesTransferred(LookupAttribute.REL_SUCCESS, 1);
+        runner.assertAllFlowFilesTransferred(LookupAttribute.REL_MATCHED, 1);
 
-        final MockFlowFile flowFile = runner.getFlowFilesForRelationship(LookupAttribute.REL_SUCCESS).get(0);
+        final MockFlowFile flowFile = runner.getFlowFilesForRelationship(LookupAttribute.REL_MATCHED).get(0);
 
         assertNotNull(flowFile);
 
@@ -141,9 +141,9 @@ public class TestLookupAttribute {
 
         runner.enqueue("some content".getBytes(), attributes);
         runner.run(1, false);
-        runner.assertAllFlowFilesTransferred(LookupAttribute.REL_SUCCESS, 1);
+        runner.assertAllFlowFilesTransferred(LookupAttribute.REL_MATCHED, 1);
 
-        final MockFlowFile flowFile = runner.getFlowFilesForRelationship(LookupAttribute.REL_SUCCESS).get(0);
+        final MockFlowFile flowFile = runner.getFlowFilesForRelationship(LookupAttribute.REL_MATCHED).get(0);
 
         assertNotNull(flowFile);
 

@@ -30,25 +30,25 @@ import static org.hamcrest.CoreMatchers.instanceOf;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 
-public class TestCSVFileLookupService {
+public class TestSimpleCsvFileLookupService {
 
     final static Optional<String> EMPTY_STRING = Optional.empty();
 
     @Test
-    public void testCSVFileLookupService() throws InitializationException, IOException, LookupFailureException {
+    public void testSimpleCsvFileLookupService() throws InitializationException, IOException, LookupFailureException {
         final TestRunner runner = TestRunners.newTestRunner(TestProcessor.class);
-        final CSVFileLookupService service = new CSVFileLookupService();
+        final SimpleCsvFileLookupService service = new SimpleCsvFileLookupService();
 
         runner.addControllerService("csv-file-lookup-service", service);
-        runner.setProperty(service, CSVFileLookupService.CSV_FILE, "src/test/resources/test.csv");
-        runner.setProperty(service, CSVFileLookupService.CSV_FORMAT, "RFC4180");
-        runner.setProperty(service, CSVFileLookupService.LOOKUP_KEY_COLUMN, "key");
-        runner.setProperty(service, CSVFileLookupService.LOOKUP_VALUE_COLUMN, "value");
+        runner.setProperty(service, SimpleCsvFileLookupService.CSV_FILE, "src/test/resources/test.csv");
+        runner.setProperty(service, SimpleCsvFileLookupService.CSV_FORMAT, "RFC4180");
+        runner.setProperty(service, SimpleCsvFileLookupService.LOOKUP_KEY_COLUMN, "key");
+        runner.setProperty(service, SimpleCsvFileLookupService.LOOKUP_VALUE_COLUMN, "value");
         runner.enableControllerService(service);
         runner.assertValid(service);
 
-        final CSVFileLookupService lookupService =
-            (CSVFileLookupService) runner.getProcessContext()
+        final SimpleCsvFileLookupService lookupService =
+            (SimpleCsvFileLookupService) runner.getProcessContext()
                 .getControllerServiceLookup()
                 .getControllerService("csv-file-lookup-service");
 

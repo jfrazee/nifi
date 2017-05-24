@@ -61,7 +61,7 @@ import org.apache.nifi.processor.util.StandardValidators;
 @SideEffectFree
 @SupportsBatching
 @InputRequirement(Requirement.INPUT_REQUIRED)
-@Tags({"lookup", "cache", "enrich", "join", "mutable", "attributes", "Attribute Expression Language"})
+@Tags({"lookup", "cache", "enrich", "join", "attributes", "Attribute Expression Language"})
 @CapabilityDescription("Lookup attributes from a lookup service")
 @DynamicProperty(name = "The name of the attribute to add to the FlowFile",
     value = "The name of the key or property to retrieve from the lookup service",
@@ -119,19 +119,19 @@ public class LookupAttribute extends AbstractProcessor {
             .required(true)
             .build();
 
-    public static final Relationship REL_SUCCESS = new Relationship.Builder()
+    public static final Relationship REL_MATCHED = new Relationship.Builder()
             .description("FlowFiles with matching lookups are routed to this relationship")
             .name("success")
-            .build();
-
-    public static final Relationship REL_FAILURE = new Relationship.Builder()
-            .description("FlowFiles with failing lookups are routed to this relationship")
-            .name("failure")
             .build();
 
     public static final Relationship REL_UNMATCHED = new Relationship.Builder()
             .description("FlowFiles with missing lookups are routed to this relationship")
             .name("unmatched")
+            .build();
+
+    public static final Relationship REL_FAILURE = new Relationship.Builder()
+            .description("FlowFiles with failing lookups are routed to this relationship")
+            .name("failure")
             .build();
 
     private List<PropertyDescriptor> descriptors;
@@ -185,9 +185,9 @@ public class LookupAttribute extends AbstractProcessor {
         this.descriptors = Collections.unmodifiableList(descriptors);
 
         final Set<Relationship> relationships = new HashSet<Relationship>();
-        relationships.add(REL_SUCCESS);
-        relationships.add(REL_FAILURE);
+        relationships.add(REL_MATCHED);
         relationships.add(REL_UNMATCHED);
+        relationships.add(REL_FAILURE);
         this.relationships = Collections.unmodifiableSet(relationships);
     }
 
@@ -271,7 +271,7 @@ public class LookupAttribute extends AbstractProcessor {
         }
 
         flowFile = session.putAllAttributes(flowFile, attributes);
-        session.transfer(flowFile, matched ? REL_SUCCESS : REL_UNMATCHED);
+        session.transfer(flowFile, matched ? REL_MATCHED : REL_UNMATCHED);
     }
 
     private boolean putAttribute(final String attributeName, final Optional<String> attributeValue, final Map<String, String> attributes, final boolean includeEmptyValues, final ComponentLog logger) {

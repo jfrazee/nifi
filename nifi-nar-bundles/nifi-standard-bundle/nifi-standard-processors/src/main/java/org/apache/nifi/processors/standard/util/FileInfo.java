@@ -182,4 +182,5 @@ public class FileInfo implements Comparable<FileInfo>, Serializable, ListableEnt
     public long getTimestamp() {
         return getLastModifiedTime();
     }
+
 }

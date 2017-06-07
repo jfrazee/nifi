@@ -17,9 +17,9 @@
 
 package org.apache.nifi.processors.standard;
 
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.nio.file.FileStore;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.List;
@@ -39,6 +40,7 @@ import java.util.function.Function;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.attributes.CoreAttributes;
 import org.apache.nifi.processor.ProcessContext;
+import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.util.list.AbstractListProcessor;
 import org.apache.nifi.util.MockFlowFile;
@@ -46,6 +48,7 @@ import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class TestListFile {
@@ -96,6 +99,7 @@ public class TestListFile {
      * and sleeps the current thread for DEFAULT_SLEEP_MILLIS before executing runner.run().
      */
     private void runNext() throws InterruptedException {
+        runner.setIncomingConnection(false);
         runner.clearTransferState();
         Thread.sleep(DEFAULT_SLEEP_MILLIS);
         runner.run();
@@ -114,11 +118,12 @@ public class TestListFile {
         assertEquals("/dir/test1", processor.getPath(context));
         runner.setProperty(ListFile.DIRECTORY, "${literal(\"/DIR/TEST2\"):toLower()}");
         assertEquals("/dir/test2", processor.getPath(context));
+        runner.setProperty(ListFile.DIRECTORY, "${foo}");
+        assertNull(processor.getPath(context, null));
     }
 
     @Test
     public void testPerformListing() throws Exception {
-
         runner.setProperty(ListFile.DIRECTORY, testDir.getAbsolutePath());
         runNext();
         runner.assertTransferCount(ListFile.REL_SUCCESS, 0);
@@ -211,8 +216,8 @@ public class TestListFile {
         runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS);
         final List<MockFlowFile> successFiles2 = runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS);
         assertEquals(2, successFiles2.size());
-        assertEquals(file2.getName(), successFiles2.get(0).getAttribute("filename"));
-        assertEquals(file1.getName(), successFiles2.get(1).getAttribute("filename"));
+        assertEquals(file2.getName(), successFiles2.get(1).getAttribute("filename"));
+        assertEquals(file1.getName(), successFiles2.get(0).getAttribute("filename"));
 
         // exclude newest
         runner.setProperty(ListFile.MIN_AGE, age1);
@@ -497,6 +502,367 @@ public class TestListFile {
     }
 
     @Test
+    public void testMaxDepth0() throws Exception {
+        final File subdir1 = new File(TESTDIR + "/subdir1");
+        assertTrue(subdir1.mkdirs());
+
+        final File subdir2 = new File(TESTDIR + "/subdir1/subdir2");
+        assertTrue(subdir2.mkdirs());
+
+        final File file1 = new File(TESTDIR + "/file1.txt");
+        assertTrue(file1.createNewFile());
+
+        final File file2 = new File(TESTDIR + "/subdir1/file2.txt");
+        assertTrue(file2.createNewFile());
+
+        final File file3 = new File(TESTDIR + "/subdir1/subdir2/file3.txt");
+        assertTrue(file3.createNewFile());
+
+        runner.setProperty(ListFile.DIRECTORY, testDir.getAbsolutePath());
+        runner.setProperty(ListFile.RECURSE, "true");
+        runner.setProperty(ListFile.MAX_DEPTH, "0");
+
+        runNext();
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS, 1);
+
+        final List<MockFlowFile> successFiles = runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS);
+
+        int successCount = 0;
+        for (final MockFlowFile mff : successFiles) {
+            final String filename = mff.getAttribute(CoreAttributes.FILENAME.key());
+            final String path = mff.getAttribute(CoreAttributes.PATH.key());
+
+            switch (filename) {
+                case "in":
+                  assertEquals(".." + File.separator, path);
+                  mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), testDir.getParentFile().getAbsolutePath() + File.separator);
+                  mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "directory");
+                  successCount += 1;
+                  break;
+            }
+        }
+        assertEquals(1, successCount);
+    }
+
+    @Test
+    public void testMaxDepth1() throws Exception {
+        final File subdir1 = new File(TESTDIR + "/subdir1");
+        assertTrue(subdir1.mkdirs());
+
+        final File subdir2 = new File(TESTDIR + "/subdir1/subdir2");
+        assertTrue(subdir2.mkdirs());
+
+        final File file1 = new File(TESTDIR + "/file1.txt");
+        assertTrue(file1.createNewFile());
+
+        final File file2 = new File(TESTDIR + "/subdir1/file2.txt");
+        assertTrue(file2.createNewFile());
+
+        final File file3 = new File(TESTDIR + "/subdir1/subdir2/file3.txt");
+        assertTrue(file3.createNewFile());
+
+        runner.setProperty(ListFile.DIRECTORY, testDir.getAbsolutePath());
+        runner.setProperty(ListFile.RECURSE, "true");
+        runner.setProperty(ListFile.MAX_DEPTH, "1");
+
+        runNext();
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS, 2);
+
+        final List<MockFlowFile> successFiles1 = runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS);
+
+        int successCount1 = 0;
+        for (final MockFlowFile mff : successFiles1) {
+            final String filename = mff.getAttribute(CoreAttributes.FILENAME.key());
+            final String path = mff.getAttribute(CoreAttributes.PATH.key());
+
+            switch (filename) {
+                case "file1.txt":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), file1.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "file");
+                    successCount1 += 1;
+                    break;
+                case "subdir1":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), subdir1.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "directory");
+                    successCount1 += 1;
+                    break;
+            }
+        }
+        assertEquals(2, successCount1);
+
+        Thread.sleep(2000);
+
+        final File file4 = new File(TESTDIR + "/file4.txt");
+        assertTrue(file4.createNewFile());
+
+        final File file5 = new File(TESTDIR + "/subdir1/file5.txt");
+        assertTrue(file5.createNewFile());
+
+        final File subdir3 = new File(TESTDIR + "/subdir3");
+        assertTrue(subdir3.mkdirs());
+
+        runNext();
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS, 2);
+
+        final List<MockFlowFile> successFiles2 = runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS);
+
+        int successCount2 = 0;
+        for (final MockFlowFile mff : successFiles2) {
+            final String filename = mff.getAttribute(CoreAttributes.FILENAME.key());
+            final String path = mff.getAttribute(CoreAttributes.PATH.key());
+
+            switch (filename) {
+                case "file4.txt":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), file4.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "file");
+                    successCount2 += 1;
+                    break;
+                case "subdir1":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), subdir1.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "directory");
+                    successCount2 += 1;
+                    break;
+            }
+        }
+        assertEquals(2, successCount2);
+    }
+
+    @Test
+    public void testMaxDepth2() throws Exception {
+        final File subdir1 = new File(TESTDIR + "/subdir1");
+        assertTrue(subdir1.mkdirs());
+
+        final File subdir2 = new File(TESTDIR + "/subdir1/subdir2");
+        assertTrue(subdir2.mkdirs());
+
+        final File file1 = new File(TESTDIR + "/file1.txt");
+        assertTrue(file1.createNewFile());
+
+        final File file2 = new File(TESTDIR + "/subdir1/file2.txt");
+        assertTrue(file2.createNewFile());
+
+        final File file3 = new File(TESTDIR + "/subdir1/subdir2/file3.txt");
+        assertTrue(file3.createNewFile());
+
+        runner.setProperty(ListFile.DIRECTORY, testDir.getAbsolutePath());
+        runner.setProperty(ListFile.RECURSE, "true");
+        runner.setProperty(ListFile.MAX_DEPTH, "2");
+
+        runNext();
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS, 3);
+
+        final List<MockFlowFile> successFiles = runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS);
+
+        int successCount = 0;
+        for (final MockFlowFile mff : successFiles) {
+            final String filename = mff.getAttribute(CoreAttributes.FILENAME.key());
+            final String path = mff.getAttribute(CoreAttributes.PATH.key());
+
+            switch (filename) {
+                case "file1.txt":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), file1.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "file");
+                    successCount += 1;
+                    break;
+                case "file2.txt":
+                    assertEquals("subdir1" + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), file2.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "file");
+                    successCount += 1;
+                    break;
+                case "subdir2":
+                    assertEquals("subdir1" + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), subdir2.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "directory");
+                    successCount += 1;
+                    break;
+            }
+        }
+        assertEquals(3, successCount);
+    }
+
+    @Test
+    public void testMaxDepth10() throws Exception {
+        final long now = getTestModifiedTime();
+
+        final File subdir1 = new File(TESTDIR + "/subdir1");
+        assertTrue(subdir1.mkdirs());
+
+        final File subdir2 = new File(TESTDIR + "/subdir1/subdir2");
+        assertTrue(subdir2.mkdirs());
+
+        final File file1 = new File(TESTDIR + "/file1.txt");
+        assertTrue(file1.createNewFile());
+
+        final File file2 = new File(TESTDIR + "/subdir1/file2.txt");
+        assertTrue(file2.createNewFile());
+
+        final File file3 = new File(TESTDIR + "/subdir1/subdir2/file3.txt");
+        assertTrue(file3.createNewFile());
+
+        runner.setProperty(ListFile.DIRECTORY, testDir.getAbsolutePath());
+        runner.setProperty(ListFile.RECURSE, "true");
+        runner.setProperty(ListFile.MAX_DEPTH, "10");
+
+        runNext();
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS, 3);
+
+        final List<MockFlowFile> successFiles = runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS);
+
+        int successCount = 0;
+        for (final MockFlowFile mff : successFiles) {
+            final String filename = mff.getAttribute(CoreAttributes.FILENAME.key());
+            final String path = mff.getAttribute(CoreAttributes.PATH.key());
+
+            switch (filename) {
+                case "file1.txt":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), file1.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "file");
+                    successCount += 1;
+                    break;
+                case "file2.txt":
+                    assertEquals("subdir1" + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), file2.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "file");
+                    successCount += 1;
+                    break;
+                case "file3.txt":
+                    assertEquals("subdir1" + File.separator + "subdir2" + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), file3.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "file");
+                    successCount += 1;
+                    break;
+            }
+        }
+        assertEquals(3, successCount);
+    }
+
+    @Test
+    public void testNestedSubdirs() throws Exception {
+        final File subdir1 = new File(TESTDIR + "/subdir1");
+        assertTrue(subdir1.mkdirs());
+
+        final File file1 = new File(TESTDIR + "/file1.txt");
+        assertTrue(file1.createNewFile());
+
+        final File file2 = new File(TESTDIR + "/subdir1/file2.txt");
+        assertTrue(file2.createNewFile());
+
+        runner.setProperty(ListFile.DIRECTORY, testDir.getAbsolutePath());
+        runner.setProperty(ListFile.RECURSE, "true");
+        runner.setProperty(ListFile.MAX_DEPTH, "1");
+
+        runNext();
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS, 2);
+
+        final List<MockFlowFile> successFiles1 = runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS);
+
+        int successCount1 = 0;
+        for (final MockFlowFile mff : successFiles1) {
+            final String filename = mff.getAttribute(CoreAttributes.FILENAME.key());
+            final String path = mff.getAttribute(CoreAttributes.PATH.key());
+
+            switch (filename) {
+                case "file1.txt":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), file1.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "file");
+                    successCount1 += 1;
+                    break;
+                case "subdir1":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), subdir1.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "directory");
+                    successCount1 += 1;
+                    break;
+            }
+        }
+        assertEquals(2, successCount1);
+
+        Thread.sleep(2000);
+
+        final File subdir2 = new File(TESTDIR + "/subdir1/subdir2");
+        assertTrue(subdir2.mkdirs());
+
+        final File file3 = new File(TESTDIR + "/file3.txt");
+        assertTrue(file3.createNewFile());
+
+        final File file4 = new File(TESTDIR + "/subdir1/file4.txt");
+        assertTrue(file4.createNewFile());
+
+        runNext();
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS, 2);
+
+        final List<MockFlowFile> successFiles2 = runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS);
+
+        int successCount2 = 0;
+        for (final MockFlowFile mff : successFiles2) {
+            final String filename = mff.getAttribute(CoreAttributes.FILENAME.key());
+            final String path = mff.getAttribute(CoreAttributes.PATH.key());
+
+            switch (filename) {
+                case "file3.txt":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), file3.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "file");
+                    successCount2 += 1;
+                    break;
+                case "subdir1":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), subdir1.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "directory");
+                    successCount2 += 1;
+                    break;
+            }
+        }
+        assertEquals(2, successCount2);
+
+        Thread.sleep(2000);
+
+        final File subdir3 = new File(TESTDIR + "/subdir3");
+        assertTrue(subdir3.mkdirs());
+
+        final File file5 = new File(TESTDIR + "/subdir1/subdir2/file5.txt");
+        assertTrue(file5.createNewFile());
+
+        runNext();
+
+        runner.assertAllFlowFilesTransferred(ListFile.REL_SUCCESS, 1);
+
+        final List<MockFlowFile> successFiles3 = runner.getFlowFilesForRelationship(ListFile.REL_SUCCESS);
+
+        int successCount3 = 0;
+        for (final MockFlowFile mff : successFiles3) {
+            final String filename = mff.getAttribute(CoreAttributes.FILENAME.key());
+            final String path = mff.getAttribute(CoreAttributes.PATH.key());
+
+            switch (filename) {
+                case "subdir1":
+                    assertEquals("." + File.separator, path);
+                    mff.assertAttributeEquals(CoreAttributes.ABSOLUTE_PATH.key(), subdir1.getParentFile().getAbsolutePath() + File.separator);
+                    mff.assertAttributeEquals(ListFile.FILE_TYPE_ATTRIBUTE, "directory");
+                    successCount3 += 1;
+                    break;
+            }
+        }
+
+        assertEquals(1, successCount3);
+    }
+
+    @Test
     public void testReadable() throws Exception {
         final long now = getTestModifiedTime();
 
@@ -556,6 +922,7 @@ public class TestListFile {
         assertEquals(relativePathString, mock1.getAttribute(CoreAttributes.PATH.key()));
         assertEquals("file1.txt", mock1.getAttribute(CoreAttributes.FILENAME.key()));
         assertEquals(absolutePathString, mock1.getAttribute(CoreAttributes.ABSOLUTE_PATH.key()));
+        assertEquals("file", mock1.getAttribute(ListFile.FILE_TYPE_ATTRIBUTE));
         assertEquals("1234", mock1.getAttribute(ListFile.FILE_SIZE_ATTRIBUTE));
 
         // check attributes dependent on views supported

@@ -23,18 +23,24 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.nifi.annotation.behavior.Stateful;
 import org.apache.nifi.annotation.behavior.TriggerSerially;
 import org.apache.nifi.annotation.lifecycle.OnScheduled;
+import org.apache.nifi.annotation.lifecycle.OnStopped;
 import org.apache.nifi.annotation.notification.OnPrimaryNodeStateChange;
 import org.apache.nifi.annotation.notification.PrimaryNodeState;
 import org.apache.nifi.components.PropertyDescriptor;
@@ -47,6 +53,8 @@ import org.apache.nifi.distributed.cache.client.Serializer;
 import org.apache.nifi.distributed.cache.client.exception.DeserializationException;
 import org.apache.nifi.distributed.cache.client.exception.SerializationException;
 import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.flowfile.attributes.CoreAttributes;
+import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -143,9 +151,7 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
         .description("All FlowFiles that are received are routed to success")
         .build();
 
-    private volatile Long lastListingTime = null;
-    private volatile Long lastProcessedTime = 0L;
-    private volatile Long lastRunTime = 0L;
+    private volatile Map<String, Long> lastListingTimes = new HashMap<>();
     private volatile boolean justElectedPrimaryNode = false;
     private volatile boolean resetState = false;
 
@@ -155,8 +161,8 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
      * near instantaneously after the prior iteration effectively voiding the built in buffer
      */
     public static final long LISTING_LAG_NANOS = TimeUnit.MILLISECONDS.toNanos(100L);
-    static final String LISTING_TIMESTAMP_KEY = "listing.timestamp";
-    static final String PROCESSED_TIMESTAMP_KEY = "processed.timestamp";
+    static final String LISTING_TIMESTAMP_KEY_PREFIX = "listing.timestamp.";
+    static final String PROCESSED_TIMESTAMP_KEY_PREFIX = "processed.timestamp.";
 
     public File getPersistenceFile() {
         return new File("conf/state/" + getIdentifier());
@@ -172,7 +178,7 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
     @Override
     public void onPropertyModified(final PropertyDescriptor descriptor, final String oldValue, final String newValue) {
         if (isConfigurationRestored() && isListingResetNecessary(descriptor)) {
-            resetTimeStates(); // clear lastListingTime so that we have to fetch new time
+            lastListingTimes.clear(); // clear lastListingTimes so that we have to fetch new time
             resetState = true;
         }
     }
@@ -208,9 +214,10 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
         }
 
         // When scheduled to run, check if the associated timestamp is null, signifying a clearing of state and reset the internal timestamp
-        if (lastListingTime != null && stateMap.get(LISTING_TIMESTAMP_KEY) == null) {
+        final Long lastListingTime = lastListingTimes.get(path);
+        if (lastListingTime != null && stateMap.get(getListingTimestampKey(path)) == null) {
             getLogger().info("Detected that state was cleared for this component.  Resetting internal values.");
-            resetTimeStates();
+            lastListingTimes.clear();
         }
 
         if (resetState) {
@@ -279,15 +286,23 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
         }
 
         if (minTimestamp != null) {
-            persist(minTimestamp, minTimestamp, stateManager, scope);
+            persist(path, minTimestamp, minTimestamp, stateManager, scope);
         }
     }
 
-    private void persist(final long listingTimestamp, final long processedTimestamp, final StateManager stateManager, final Scope scope) throws IOException {
-        final Map<String, String> updatedState = new HashMap<>(1);
-        updatedState.put(LISTING_TIMESTAMP_KEY, String.valueOf(listingTimestamp));
-        updatedState.put(PROCESSED_TIMESTAMP_KEY, String.valueOf(processedTimestamp));
+    private void persist(final String directory, final long listingTimestamp, final long processedTimestamp, final StateManager stateManager, final Scope scope) throws IOException {
+        final Map<String, String> updatedState = new HashMap<>(stateManager.getState(Scope.CLUSTER).toMap());
+        updatedState.put(getListingTimestampKey(directory), String.valueOf(listingTimestamp));
+        updatedState.put(getProcessedTimestampKey(directory), String.valueOf(processedTimestamp));
         stateManager.setState(updatedState, scope);
+    }
+
+    protected String getListingTimestampKey(final String directory) {
+        return LISTING_TIMESTAMP_KEY_PREFIX + directory;
+    }
+
+    protected String getProcessedTimestampKey(final String directory) {
+        return PROCESSED_TIMESTAMP_KEY_PREFIX + directory;
     }
 
     protected String getKey(final String directory) {
@@ -303,152 +318,229 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
 
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
-        Long minTimestamp = lastListingTime;
+        final ComponentLog logger = getLogger();
 
-        if (this.lastListingTime == null || this.lastProcessedTime == null || justElectedPrimaryNode) {
+        ///////////////////////////////////////////////////////////////////////
+
+        // 1. State:
+        //
+        // a. Last listing timestamp (lastListingTime; i.e., previous minimum timestamp)
+        // b. Last processed timestamp (lastProcessedTime)
+        // c. Minimum timestamp (minTimestamp; i.e., smallest timestamp to select/accept in
+        //   listing; local only)
+        // d. Last run timestamp (lastRunTime; local only)
+        // e. Local versions of (a-e)
+
+        // 2. If the session has an incoming FlowFile then:
+        //
+        // a. Get the path from from the context and the incoming FlowFile
+        // b. Else get the path from the context and DIRECTORY property
+
+        // 3. If listing timestamps are not yet established (i.e., null) or if
+        // just elected the primary node then:
+        //
+        // a. Attempt to retrieve the last listing time and last processed time
+        //    timestamps from the state manager; yield if there's an
+        //    IOException
+        // b. Set the minimum timestamp to the last listing time from the state
+        //    manager, if it exists
+        // c. If the minimum timestamp equals the local last listing time, yield
+        // d. Otherwise set the local last listing time to the minimum
+        //    timestamp (i.e., the last listing time from the state manager)
+
+        // 4. Set stopwatch for current timestamp nanos
+
+        // 5. Perform the listing:
+        //
+        // a. Yield if there's an IOException
+        // b. Yield if the listing is null or empty
+
+        // 6. Create an ordered map, timestamp -> file list, including only
+        //    files where:
+        //
+        // a. The file timestamp is greater than or equal to the minimum
+        //    timestamp
+        // b. The file timstamp is greater than the last processed time
+        //
+        // I.e., exclude, reject, filter out files that are older than the
+        // minimum timestamp or older than the last processed time
+
+        // 7. Set a counter for the no. FlowFiles created to 0
+
+        // 8. If the size of the ordered map is greater than 0:
+        //
+        // a. Get the maximum file timestamp from the keys of the ordered map
+        // b. If the maximum file timestamp equals the last listing timestamp,
+        //    and the minimal listing lag hasn't been exceeded or the maximum
+        //    file timestamp equals the last processed timestamp, then yield
+        // c. If the maximum file timestamp is greater than or equal to the
+        //    current timestamp nanos, minus the minimal listing lag, then
+        //    hold the most recent entries back one cycle by removing the
+        //    entry in the ordered map with the key of the maximum file
+        //    timestamp (NOTE: this probably behaves weirdly if there are
+        //    other keys in the map that don't satisfy the criteria b/c of the
+        //    listing lag)
+        // d. Otherwise leave the entries in the map
+
+        // 9. For the remaining entries:
+        //
+        // a. Create and transfer a FlowFile
+        // b. Increment the count of the no. of FlowFiles created
+
+        // 10. If the maximum file timestamp exists (i.e., not null), then
+        //     update the local state and the state stored in the state manager:
+        //
+        // a. If there were any FlowFiles created, set the last processed
+        //    timestamp to the maximum file timestamp remaining in the
+        //    ordered map/maximum file timestamp of the FlowFiles transferred
+        //    (b/c you removed some entries) and commit the session
+        // b. Set the last run time to the current time nanos
+        // c. If the maximum file timestamp does not equal the last listing
+        //    time or FlowFiles were created/transferred, then set the last
+        //    listing time to the maximum file timestamp
+        // d. Otherwise, yield and reset the last listing time to 0
+
+        ///////////////////////////////////////////////////////////////////////
+
+        // 1. State:
+
+        // 2. If the session has an incoming FlowFile then:
+        //
+        // a. Get the path from from the context and the incoming FlowFile
+        // b. Else get the path from the context and DIRECTORY property
+
+        FlowFile incomingFlowFile = null;
+
+        final String path;
+        if (context.hasIncomingConnection()) {
+            incomingFlowFile = session.get();
+            if (incomingFlowFile == null && context.hasNonLoopConnection()) {
+                context.yield();
+                return;
+            }
+            path = getPath(context, incomingFlowFile);
+            session.remove(incomingFlowFile);
+        } else {
+            path = getPath(context);
+        }
+
+        // 3. Retrieve the state:
+        //
+        // a. If there is no local state or there was just a primary node
+        //    election, then try to retrieve the state from the state manager
+        // b. If the last listing time exists in the state manager, then set
+        //    the local last listing time to the value from the state manager
+
+        OptionalLong lastListingTime = lastListingTimes.containsKey(path) ? OptionalLong.of(lastListingTimes.get(path)) : OptionalLong.empty();
+        if (!lastListingTime.isPresent() || justElectedPrimaryNode) {
             try {
-                // Attempt to retrieve state from the state manager if a last listing was not yet established or
-                // if just elected the primary node
                 final StateMap stateMap = context.getStateManager().getState(getStateScope(context));
-                final String listingTimestampString = stateMap.get(LISTING_TIMESTAMP_KEY);
-                final String lastProcessedString= stateMap.get(PROCESSED_TIMESTAMP_KEY);
-                if (lastProcessedString != null) {
-                    this.lastProcessedTime = Long.parseLong(lastProcessedString);
+                final String lastListingTimeString = stateMap.get(getListingTimestampKey(path));
+                if (StringUtils.isNotBlank(lastListingTimeString)) {
+                    lastListingTime = OptionalLong.of(Long.parseLong(lastListingTimeString));
                 }
-                if (listingTimestampString != null) {
-                    minTimestamp = Long.parseLong(listingTimestampString);
-                    // If our determined timestamp is the same as that of our last listing, skip this execution as there are no updates
-                    if (minTimestamp == this.lastListingTime) {
-                        context.yield();
-                        return;
-                    } else {
-                        this.lastListingTime = minTimestamp;
-                    }
-                }
-                justElectedPrimaryNode = false;
             } catch (final IOException ioe) {
-                getLogger().error("Failed to retrieve timestamp of last listing from the State Manager. Will not perform listing until this is accomplished.");
+                logger.error("Failed to retrieve timestamp of last listing from the State Manager for {} due to {}. Will not perform listing until this is accomplished.", new Object[]{path, ioe});
+                context.yield();
+                return;
+            }
+            justElectedPrimaryNode = false;
+        }
+
+        // 4. Set the minimum timestamp to the last listing, if it exists
+
+        final long minTimestamp = lastListingTime.orElse(0L);
+
+        // 5. Perform the listing
+
+        List<T> entityList;
+
+        try {
+            entityList = performListing(context, incomingFlowFile, minTimestamp);
+        } catch (final IOException e) {
+            logger.error("Failed to perform listing on remote host due to {}", e);
+            context.yield();
+            return;
+        }
+
+        // 5. Filter the listing; i.e., exclude, reject, filter out files that
+        //    are older than the minimum timestamp
+
+        if (entityList != null) {
+            final long maxLagTimestamp = System.nanoTime() - LISTING_LAG_NANOS;
+            entityList = entityList.stream()
+              .filter(e -> e.getTimestamp() > minTimestamp && e.getTimestamp() <= maxLagTimestamp)
+              .collect(Collectors.toList());
+         } else {
+            entityList = Collections.EMPTY_LIST;
+         }
+
+         logger.debug("{} FlowFiles created for {}", new Object[]{entityList.size(), path});
+
+        // 6. Get the maximum file timestamp from the filtered listing
+
+        final OptionalLong maxTimestamp;
+        if (entityList.size() > 0) {
+            maxTimestamp = entityList.stream().mapToLong(e -> e.getTimestamp()).max();
+        } else {
+            maxTimestamp = OptionalLong.empty();
+        }
+
+        // 7. Yield if the maximum file timestamp does not exceed the minimum
+        //    lag or if the maximum file timestamp equals the last listing time
+
+        if (lastListingTime.isPresent()) {
+            final long listingLag = System.nanoTime() - lastListingTime.getAsLong();
+            if ((listingLag < LISTING_LAG_NANOS) || (maxTimestamp.isPresent() && maxTimestamp.getAsLong() <= lastListingTime.getAsLong())) {
+                logger.debug("We've not eclipsed the minimal listing lag or maximum file timestamp is equal to the last listing timestamp for {}, yielding.", new Object[]{path});
                 context.yield();
                 return;
             }
         }
 
-        final List<T> entityList;
-        final long currentListingTimestamp = System.nanoTime();
-        try {
-            // track of when this last executed for consideration of the lag nanos
-            entityList = performListing(context, minTimestamp);
-        } catch (final IOException e) {
-            getLogger().error("Failed to perform listing on remote host due to {}", e);
-            context.yield();
-            return;
+        // 7. Create and transfer FlowFiles for the remaining entries
+
+        int flowFileCount = 0;
+        for (final T e : entityList) {
+          final Map<String, String> attributes = createAttributes(e, context);
+          FlowFile flowFile = session.create();
+          flowFile = session.putAllAttributes(flowFile, attributes);
+          session.transfer(flowFile, REL_SUCCESS);
+          flowFileCount++;
         }
 
-        if (entityList == null || entityList.isEmpty()) {
-            context.yield();
-            return;
-        }
+        logger.debug("Transferred {} FlowFiles for {}", new Object[]{flowFileCount, path});
 
-        Long latestListingTimestamp = null;
-        final TreeMap<Long, List<T>> orderedEntries = new TreeMap<>();
+        // 8. If any FlowFiles were created/transferred, update the state:
+        //
+        // a. Set the local last listing time to the maximum file timestamp
+        // b. Update the state manager state setting the last listing time to
+        //    the new local last listing time (i.e., the maximum file timestamp)
 
-        // Build a sorted map to determine the latest possible entries
-        for (final T entity : entityList) {
-            final long entityTimestamp = entity.getTimestamp();
-            // New entries are all those that occur at or after the associated timestamp
-            final boolean newEntry = minTimestamp == null || entityTimestamp >= minTimestamp && entityTimestamp > lastProcessedTime;
+        if (maxTimestamp.isPresent() && (maxTimestamp.getAsLong() >= lastListingTime.orElse(0L))) {
+            lastListingTimes.put(path, maxTimestamp.getAsLong());
 
-            if (newEntry) {
-                List<T> entitiesForTimestamp = orderedEntries.get(entity.getTimestamp());
-                if (entitiesForTimestamp == null) {
-                    entitiesForTimestamp = new ArrayList<T>();
-                    orderedEntries.put(entity.getTimestamp(), entitiesForTimestamp);
-                }
-                entitiesForTimestamp.add(entity);
-            }
-        }
-
-        int flowfilesCreated = 0;
-
-        if (orderedEntries.size() > 0) {
-            latestListingTimestamp = orderedEntries.lastKey();
-
-            // If the last listing time is equal to the newest entries previously seen,
-            // another iteration has occurred without new files and special handling is needed to avoid starvation
-            if (latestListingTimestamp.equals(lastListingTime)) {
-                /* We are done when either:
-                 *   - the latest listing timestamp is If we have not eclipsed the minimal listing lag needed due to being triggered too soon after the last run
-                 *   - the latest listing timestamp is equal to the last processed time, meaning we handled those items originally passed over
-                 */
-                if (System.nanoTime() - lastRunTime < LISTING_LAG_NANOS || latestListingTimestamp.equals(lastProcessedTime)) {
-                    context.yield();
-                    return;
-                }
-
-            } else if (latestListingTimestamp >= currentListingTimestamp - LISTING_LAG_NANOS) {
-                // Otherwise, newest entries are held back one cycle to avoid issues in writes occurring exactly when the listing is being performed to avoid missing data
-                orderedEntries.remove(latestListingTimestamp);
-            }
-
-            for (List<T> timestampEntities : orderedEntries.values()) {
-                for (T entity : timestampEntities) {
-                    // Create the FlowFile for this path.
-                    final Map<String, String> attributes = createAttributes(entity, context);
-                    FlowFile flowFile = session.create();
-                    flowFile = session.putAllAttributes(flowFile, attributes);
-                    session.transfer(flowFile, REL_SUCCESS);
-                    flowfilesCreated++;
-                }
-            }
-        }
-
-        // As long as we have a listing timestamp, there is meaningful state to capture regardless of any outputs generated
-        if (latestListingTimestamp != null) {
-            boolean processedNewFiles = flowfilesCreated > 0;
-            if (processedNewFiles) {
-                // If there have been files created, update the last timestamp we processed
-                lastProcessedTime = orderedEntries.lastKey();
-                getLogger().info("Successfully created listing with {} new objects", new Object[]{flowfilesCreated});
+            if (entityList.size() > 0) {
                 session.commit();
             }
 
-            lastRunTime = System.nanoTime();
-
-            if (!latestListingTimestamp.equals(lastListingTime) || processedNewFiles) {
-                // We have performed a listing and pushed any FlowFiles out that may have been generated
-                // Now, we need to persist state about the Last Modified timestamp of the newest file
-                // that we evaluated. We do this in order to avoid pulling in the same file twice.
-                // However, we want to save the state both locally and remotely.
-                // We store the state remotely so that if a new Primary Node is chosen, it can pick up where the
-                // previously Primary Node left off.
-                // We also store the state locally so that if the node is restarted, and the node cannot contact
-                // the distributed state cache, the node can continue to run (if it is primary node).
-                try {
-                    lastListingTime = latestListingTimestamp;
-                    persist(latestListingTimestamp, lastProcessedTime, context.getStateManager(), getStateScope(context));
-                } catch (final IOException ioe) {
-                    getLogger().warn("Unable to save state due to {}. If NiFi is restarted before state is saved, or "
-                        + "if another node begins executing this Processor, data duplication may occur.", ioe);
-                }
+            try {
+                persist(path, maxTimestamp.getAsLong(), maxTimestamp.getAsLong(), context.getStateManager(), getStateScope(context));
+            } catch (final IOException ioe) {
+                getLogger().warn("Unable to save state due to {}. If NiFi is restarted before state is saved, or "
+                    + "if another node begins executing this Processor, data duplication may occur.", ioe);
             }
-
         } else {
-            getLogger().debug("There is no data to list. Yielding.");
+            lastListingTimes.put(path, lastListingTime.orElse(0L));
+            logger.debug("There is no data to list for {}, yielding.", new Object[]{path});
             context.yield();
-
-            // lastListingTime = 0 so that we don't continually poll the distributed cache / local file system
-            if (lastListingTime == null) {
-                lastListingTime = 0L;
-            }
-
             return;
         }
     }
 
-    private void resetTimeStates() {
-        lastListingTime = null;
-        lastProcessedTime = 0L;
-        lastRunTime = 0L;
+    @OnStopped
+    public void onStopped() {
+        lastListingTimes.clear();
     }
 
     /**
@@ -463,15 +555,27 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
     protected abstract Map<String, String> createAttributes(T entity, ProcessContext context);
 
     /**
-     * Returns the path to perform a listing on.
-     * Many resources can be comprised of a "path" (or a "container" or "bucket", etc.) as well as name or identifier that is unique only
-     * within that path. This method is responsible for returning the path that is currently being polled for entities. If this does concept
-     * does not apply for the concrete implementation, it is recommended that the concrete implementation return "." or "/" for all invocations of this method.
-     *
-     * @param context the ProcessContex to use in order to obtain configuration
-     * @return the path that is to be used to perform the listing, or <code>null</code> if not applicable.
-     */
+      * Returns the path to perform a listing on.
+      * Many resources can be comprised of a "path" (or a "container" or "bucket", etc.) as well as name or identifier that is unique only
+      * within that path. This method is responsible for returning the path that is currently being polled for entities. If this does concept
+      * does not apply for the concrete implementation, it is recommended that the concrete implementation return "." or "/" for all invocations of this method.
+      *
+      * @param context the ProcessContext to use in order to obtain configuration
+      * @return the path that is to be used to perform the listing, or <code>null</code> if not applicable.
+      */
     protected abstract String getPath(final ProcessContext context);
+
+    /**
+      * Returns the path to perform a listing on.
+      * Many resources can be comprised of a "path" (or a "container" or "bucket", etc.) as well as name or identifier that is unique only
+      * within that path. This method is responsible for returning the path that is currently being polled for entities. If this does concept
+      * does not apply for the concrete implementation, it is recommended that the concrete implementation return "." or "/" for all invocations of this method.
+      *
+      * @param context the ProcessContext to use in order to obtain configuration
+      * @param flowFile the FlowFile to use in order to obtain configuration
+      * @return the path that is to be used to perform the listing, or <code>null</code> if not applicable.
+      */
+    protected abstract String getPath(final ProcessContext context, final FlowFile flowFile);
 
     /**
      * Performs a listing of the remote entities that can be pulled. If any entity that is returned has already been "discovered" or "emitted"
@@ -480,11 +584,25 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
      * will be filtered out by the Processor. Therefore, it is not necessary that implementations perform this filtering but can be more efficient
      * if the filtering can be performed on the server side prior to retrieving the information.
      *
-     * @param context      the ProcessContex to use in order to pull the appropriate entities
+     * @param context      the ProcessContext to use in order to pull the appropriate entities
      * @param minTimestamp the minimum timestamp of entities that should be returned.
      * @return a Listing of entities that have a timestamp >= minTimestamp
      */
     protected abstract List<T> performListing(final ProcessContext context, final Long minTimestamp) throws IOException;
+
+    /**
+     * Performs a listing of the remote entities that can be pulled. If any entity that is returned has already been "discovered" or "emitted"
+     * by this Processor, it will be ignored. A discussion of how the Processor determines those entities that have already been emitted is
+     * provided above in the documentation for this class. Any entity that is returned by this method with a timestamp prior to the minTimestamp
+     * will be filtered out by the Processor. Therefore, it is not necessary that implementations perform this filtering but can be more efficient
+     * if the filtering can be performed on the server side prior to retrieving the information.
+     *
+     * @param context      the ProcessContext to use in order to pull the appropriate entities
+     * @param flowFile     the FlowFile to perform the listing against
+     * @param minTimestamp the minimum timestamp of entities that should be returned.
+     * @return a Listing of entities that have a timestamp >= minTimestamp
+     */
+    protected abstract List<T> performListing(final ProcessContext context, final FlowFile flowFile, final Long minTimestamp) throws IOException;
 
     /**
      * Determines whether or not the listing must be reset if the value of the given property is changed
@@ -502,7 +620,6 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
      */
     protected abstract Scope getStateScope(final ProcessContext context);
 
-
     private static class StringSerDe implements Serializer<String>, Deserializer<String> {
         @Override
         public String deserialize(final byte[] value) throws DeserializationException, IOException {
@@ -518,4 +635,5 @@ public abstract class AbstractListProcessor<T extends ListableEntity> extends Ab
             out.write(value.getBytes(StandardCharsets.UTF_8));
         }
     }
+
 }

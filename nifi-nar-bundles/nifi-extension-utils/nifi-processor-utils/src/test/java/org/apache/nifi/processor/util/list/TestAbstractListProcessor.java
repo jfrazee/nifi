@@ -40,7 +40,9 @@ import org.apache.nifi.controller.AbstractControllerService;
 import org.apache.nifi.distributed.cache.client.Deserializer;
 import org.apache.nifi.distributed.cache.client.DistributedMapCacheClient;
 import org.apache.nifi.distributed.cache.client.Serializer;
+import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.processor.ProcessContext;
+import org.apache.nifi.processor.ProcessSession;
 import org.apache.nifi.processor.util.list.AbstractListProcessor;
 import org.apache.nifi.processor.util.list.ListableEntity;
 import org.apache.nifi.reporting.InitializationException;
@@ -71,6 +73,7 @@ public class TestAbstractListProcessor {
         // First run, the above listed entries should be emitted since it has existed.
         final TestRunner runner = TestRunners.newTestRunner(proc);
 
+        runner.setIncomingConnection(false);
         runner.run();
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 2);
         runner.clearTransferState();
@@ -87,6 +90,7 @@ public class TestAbstractListProcessor {
     public void testPreviouslySkippedEntriesEmittedOnNextIteration() throws Exception {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
+        runner.setIncomingConnection(false);
         runner.run();
 
         final long initialTimestamp = System.nanoTime();
@@ -112,6 +116,7 @@ public class TestAbstractListProcessor {
     public void testOnlyNewEntriesEmitted() throws Exception {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
+        runner.setIncomingConnection(false);
         runner.run();
 
         final long initialTimestamp = System.nanoTime();
@@ -162,6 +167,7 @@ public class TestAbstractListProcessor {
     public void testHandleRestartWithEntriesAlreadyTransferredAndNoneNew() throws Exception {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
+        runner.setIncomingConnection(false);
 
         final long initialTimestamp = System.nanoTime();
 
@@ -170,8 +176,8 @@ public class TestAbstractListProcessor {
 
         // Emulate having state but not having had the processor run such as in a restart
         final Map<String, String> preexistingState = new HashMap<>();
-        preexistingState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, Long.toString(initialTimestamp));
-        preexistingState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, Long.toString(initialTimestamp));
+        preexistingState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY_PREFIX + "/path", Long.toString(initialTimestamp));
+        preexistingState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY_PREFIX + "/path", Long.toString(initialTimestamp));
         runner.getStateManager().setState(preexistingState, Scope.CLUSTER);
 
         // run for the first time
@@ -219,6 +225,7 @@ public class TestAbstractListProcessor {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
         final DistributedCache cache = new DistributedCache();
+        runner.setIncomingConnection(false);
         runner.addControllerService("cache", cache);
         runner.enableControllerService(cache);
         runner.setProperty(AbstractListProcessor.DISTRIBUTED_CACHE_SERVICE, "cache");
@@ -230,16 +237,16 @@ public class TestAbstractListProcessor {
 
         final Map<String, String> expectedState = new HashMap<>();
         // Ensure only timestamp is migrated
-        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, String.valueOf(initialTimestamp));
-        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, "0");
+        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY_PREFIX + "/path", String.valueOf(initialTimestamp));
+        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY_PREFIX + "/path", "0");
         runner.getStateManager().assertStateEquals(expectedState, Scope.CLUSTER);
 
         Thread.sleep(DEFAULT_SLEEP_MILLIS);
 
         runner.run();
         // Ensure only timestamp is migrated
-        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, String.valueOf(initialTimestamp));
-        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, String.valueOf(initialTimestamp));
+        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY_PREFIX + "/path", String.valueOf(initialTimestamp));
+        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY_PREFIX + "/path", String.valueOf(initialTimestamp));
         runner.getStateManager().assertStateEquals(expectedState, Scope.CLUSTER);
     }
 
@@ -248,6 +255,7 @@ public class TestAbstractListProcessor {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
         final DistributedCache cache = new DistributedCache();
+        runner.setIncomingConnection(false);
         runner.addControllerService("cache", cache);
         runner.enableControllerService(cache);
         runner.setProperty(AbstractListProcessor.DISTRIBUTED_CACHE_SERVICE, "cache");
@@ -261,8 +269,8 @@ public class TestAbstractListProcessor {
         final MockStateManager stateManager = runner.getStateManager();
         final Map<String, String> expectedState = new HashMap<>();
         // Ensure only timestamp is migrated
-        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, "1492");
-        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, "1492");
+        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY_PREFIX + "/path", "1492");
+        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY_PREFIX + "/path", "1492");
         stateManager.assertStateEquals(expectedState, Scope.CLUSTER);
     }
 
@@ -270,7 +278,7 @@ public class TestAbstractListProcessor {
     public void testNoStateToMigrate() throws Exception {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
-
+        runner.setIncomingConnection(false);
         runner.run();
 
         final MockStateManager stateManager = runner.getStateManager();
@@ -282,6 +290,7 @@ public class TestAbstractListProcessor {
     public void testStateMigratedFromLocalFile() throws Exception {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
+        runner.setIncomingConnection(false);
 
         // Create a file that we will populate with the desired state
         File persistenceFile = testFolder.newFile(proc.persistenceFilename);
@@ -305,8 +314,8 @@ public class TestAbstractListProcessor {
         // Verify the state manager now maintains the associated state
         final Map<String, String> expectedState = new HashMap<>();
         // Ensure only timestamp is migrated
-        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY, "1492");
-        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY, "1492");
+        expectedState.put(AbstractListProcessor.LISTING_TIMESTAMP_KEY_PREFIX + "/path", "1492");
+        expectedState.put(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY_PREFIX + "/path", "1492");
         runner.getStateManager().assertStateEquals(expectedState, Scope.CLUSTER);
     }
 
@@ -314,6 +323,7 @@ public class TestAbstractListProcessor {
     public void testResumeListingAfterClearingState() throws Exception {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
+        runner.setIncomingConnection(false);
         runner.run();
 
         runner.assertAllFlowFilesTransferred(ConcreteListProcessor.REL_SUCCESS, 0);
@@ -353,6 +363,7 @@ public class TestAbstractListProcessor {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
         final DistributedCache cache = new DistributedCache();
+        runner.setIncomingConnection(false);
         runner.addControllerService("cache", cache);
         runner.enableControllerService(cache);
         runner.setProperty(AbstractListProcessor.DISTRIBUTED_CACHE_SERVICE, "cache");
@@ -366,6 +377,7 @@ public class TestAbstractListProcessor {
     public void testOnlyNewStateStored() throws Exception {
         final ConcreteListProcessor proc = new ConcreteListProcessor();
         final TestRunner runner = TestRunners.newTestRunner(proc);
+        runner.setIncomingConnection(false);
         runner.run();
 
         final long initialTimestamp = System.nanoTime();
@@ -390,8 +402,8 @@ public class TestAbstractListProcessor {
         final Map<String, String> map = stateMap.toMap();
         // Ensure only timestamp is migrated
         assertEquals(2, map.size());
-        assertEquals(Long.toString(initialTimestamp), map.get(AbstractListProcessor.LISTING_TIMESTAMP_KEY));
-        assertEquals(Long.toString(initialTimestamp), map.get(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY));
+        assertEquals(Long.toString(initialTimestamp), map.get(AbstractListProcessor.LISTING_TIMESTAMP_KEY_PREFIX + "/path"));
+        assertEquals(Long.toString(initialTimestamp), map.get(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY_PREFIX + "/path"));
 
         proc.addEntity("new name", "new id", initialTimestamp + 1);
         runner.run();
@@ -403,9 +415,9 @@ public class TestAbstractListProcessor {
         assertEquals(3, updatedStateMap.getVersion());
 
         assertEquals(2, updatedStateMap.toMap().size());
-        assertEquals(Long.toString(initialTimestamp + 1), updatedStateMap.get(AbstractListProcessor.LISTING_TIMESTAMP_KEY));
+        assertEquals(Long.toString(initialTimestamp + 1), updatedStateMap.get(AbstractListProcessor.LISTING_TIMESTAMP_KEY_PREFIX + "/path"));
         // Processed timestamp is now caught up
-        assertEquals(Long.toString(initialTimestamp + 1), updatedStateMap.get(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY));
+        assertEquals(Long.toString(initialTimestamp + 1), updatedStateMap.get(AbstractListProcessor.PROCESSED_TIMESTAMP_KEY_PREFIX + "/path"));
     }
 
     private static class DistributedCache extends AbstractControllerService implements DistributedMapCacheClient {
@@ -507,12 +519,22 @@ public class TestAbstractListProcessor {
 
         @Override
         protected String getPath(final ProcessContext context) {
-            return "/path";
+          return "/path";
+        }
+
+        @Override
+        protected String getPath(final ProcessContext context, final FlowFile flowFile) {
+          return getPath(context);
         }
 
         @Override
         protected List<ListableEntity> performListing(final ProcessContext context, final Long minTimestamp) throws IOException {
             return Collections.unmodifiableList(entities);
+        }
+
+        @Override
+        protected List<ListableEntity> performListing(final ProcessContext context, final FlowFile flowFile, final Long minTimestamp) throws IOException {
+            return performListing(context, minTimestamp);
         }
 
         @Override

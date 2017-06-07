@@ -38,6 +38,7 @@ import org.apache.nifi.annotation.documentation.SeeAlso;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.components.state.Scope;
+import org.apache.nifi.flowfile.FlowFile;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.nifi.processor.util.list.AbstractListProcessor;
@@ -111,6 +112,11 @@ public class ListAzureBlobStorage extends AbstractListProcessor<BlobInfo> {
     }
 
     @Override
+    protected String getPath(final ProcessContext context, final FlowFile flowFile) {
+        return getPath(context);
+    }
+
+    @Override
     protected boolean isListingResetNecessary(final PropertyDescriptor property) {
         // re-list if configuration changed, but not when security keys are rolled (not included in the condition)
         return PREFIX.equals(property)
@@ -157,6 +163,11 @@ public class ListAzureBlobStorage extends AbstractListProcessor<BlobInfo> {
             throw (new IOException(e));
         }
         return listing;
+    }
+
+    @Override
+    protected List<BlobInfo> performListing(final ProcessContext context, final FlowFile flowFile, final Long minTimestamp) throws IOException {
+        return performListing(context, minTimestamp);
     }
 
     private CloudStorageAccount createStorageConnection(ProcessContext context) {

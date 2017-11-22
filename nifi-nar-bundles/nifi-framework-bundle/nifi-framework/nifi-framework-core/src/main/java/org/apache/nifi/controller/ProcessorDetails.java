@@ -18,6 +18,7 @@ package org.apache.nifi.controller;
 
 import org.apache.nifi.annotation.behavior.EventDriven;
 import org.apache.nifi.annotation.behavior.InputRequirement;
+import org.apache.nifi.annotation.behavior.Isolated;
 import org.apache.nifi.annotation.behavior.SideEffectFree;
 import org.apache.nifi.annotation.behavior.SupportsBatching;
 import org.apache.nifi.annotation.behavior.TriggerSerially;
@@ -39,6 +40,7 @@ public class ProcessorDetails {
     private final boolean triggeredSerially;
     private final boolean triggerWhenAnyDestinationAvailable;
     private final boolean eventDrivenSupported;
+    private final boolean isolated;
     private final boolean batchSupported;
     private final InputRequirement.Requirement inputRequirement;
     private final ComponentLog componentLog;
@@ -56,6 +58,7 @@ public class ProcessorDetails {
         this.triggeredSerially = procClass.isAnnotationPresent(TriggerSerially.class);
         this.triggerWhenAnyDestinationAvailable = procClass.isAnnotationPresent(TriggerWhenAnyDestinationAvailable.class);
         this.eventDrivenSupported = procClass.isAnnotationPresent(EventDriven.class) && !triggeredSerially && !triggerWhenEmpty;
+        this.isolated = procClass.isAnnotationPresent(Isolated.class);
 
         final boolean inputRequirementPresent = procClass.isAnnotationPresent(InputRequirement.class);
         if (inputRequirementPresent) {
@@ -83,6 +86,10 @@ public class ProcessorDetails {
 
     public boolean isTriggeredSerially() {
         return triggeredSerially;
+    }
+
+    public boolean isIsolated() {
+        return isolated;
     }
 
     public boolean isTriggerWhenAnyDestinationAvailable() {

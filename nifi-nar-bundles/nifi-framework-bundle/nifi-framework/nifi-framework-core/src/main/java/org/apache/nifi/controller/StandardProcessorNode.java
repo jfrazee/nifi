@@ -178,7 +178,10 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
         schedulingStrategy = SchedulingStrategy.TIMER_DRIVEN;
         executionNode = ExecutionNode.ALL;
         try {
-            if (processorDetails.getProcClass().isAnnotationPresent(DefaultSchedule.class)) {
+            if (nifiProperties.isClustered() && processorDetails.isIsolated()) {
+                this.setSchedulingStrategy(SchedulingStrategy.PRIMARY_NODE_ONLY);
+                this.setExecutionNode(ExecutionNode.PRIMARY);
+            } else if (processorDetails.getProcClass().isAnnotationPresent(DefaultSchedule.class)) {
                 DefaultSchedule dsc = processorDetails.getProcClass().getAnnotation(DefaultSchedule.class);
                 try {
                     this.setSchedulingStrategy(dsc.strategy());
@@ -298,7 +301,7 @@ public class StandardProcessorNode extends ProcessorNode implements Connectable 
 
     @Override
     public boolean isIsolated() {
-        return schedulingStrategy == SchedulingStrategy.PRIMARY_NODE_ONLY || executionNode == ExecutionNode.PRIMARY;
+        return processorRef.get().isIsolated() || schedulingStrategy == SchedulingStrategy.PRIMARY_NODE_ONLY || executionNode == ExecutionNode.PRIMARY;
     }
 
     /**

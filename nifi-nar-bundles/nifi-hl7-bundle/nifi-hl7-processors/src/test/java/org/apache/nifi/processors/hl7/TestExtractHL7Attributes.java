@@ -90,8 +90,11 @@ public class TestExtractHL7Attributes {
             "PID|||12345^^^XYZ^MR||SMITH^JOHN||19700100|M||||||||||111111111111|123456789|\r\n" +
             "PD1||||1234567890^LAST^FIRST^M^^^^^NPI|\r\n" +
             "ORC|NW|987654321^EPC|123456789^EPC||||||20161003000000|||SMITH\r\n" +
+            "ORC|SE|101112131415^CNR|3029282726^CNR||||||20141103000000|||NICK\r\n" +
             "OBR|1|341856649^HNAM_ORDERID|000000000000000000|648088^Basic Metabolic Panel|||20150101000000|||||||||1620^Johnson^Corey^A||||||20150101000000|||F|||||||||||20150101000000|\r\n" +
-            "OBX|1|NM|GLU^Glucose Lvl|59|mg/dL|65-99^65^99|L|||F|||20150102000000|\r\n";
+            "OBX|1|NM|GLU^Glucose Lvl|59|mg/dL|65-99^65^99|L|||F|||20150102000000|\r\n" +
+            "DG1|1|I10|A.99|MOUSTACHE RODENTS, LOWER LEFT WING|\r\n" +
+            "DG1|2|I10|B.52|RUSTY UNICORN HORN|\r\n";
 
         final SortedMap<String, String> expectedAttributes = new TreeMap<>();
 
@@ -109,6 +112,12 @@ public class TestExtractHL7Attributes {
         expectedAttributes.put("ORC_1.3", "123456789^EPC");
         expectedAttributes.put("ORC_1.9", "20161003000000");
         expectedAttributes.put("ORC_1.12", "SMITH");
+
+        expectedAttributes.put("ORC_2.1", "SE");
+        expectedAttributes.put("ORC_2.2", "101112131415^CNR");
+        expectedAttributes.put("ORC_2.3", "3029282726^CNR");
+        expectedAttributes.put("ORC_2.9", "20141103000000");
+        expectedAttributes.put("ORC_2.12", "NICK");
 
         expectedAttributes.put("OBR_1.1", "1");
         expectedAttributes.put("OBR_1.2", "341856649^HNAM_ORDERID");
@@ -138,6 +147,16 @@ public class TestExtractHL7Attributes {
         expectedAttributes.put("PID.8", "M");
         expectedAttributes.put("PID.18", "111111111111");
         expectedAttributes.put("PID.19", "123456789");
+
+        expectedAttributes.put("DG1_1.1", "1");
+        expectedAttributes.put("DG1_1.2", "I10");
+        expectedAttributes.put("DG1_1.3", "A.99");
+        expectedAttributes.put("DG1_1.4", "MOUSTACHE RODENTS, LOWER LEFT WING");
+
+        expectedAttributes.put("DG1_2.1", "2");
+        expectedAttributes.put("DG1_2.2", "I10");
+        expectedAttributes.put("DG1_2.3", "B.52");
+        expectedAttributes.put("DG1_2.4", "RUSTY UNICORN HORN");
 
         runTests(message, expectedAttributes);
     }

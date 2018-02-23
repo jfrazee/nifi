@@ -42,6 +42,7 @@ import org.apache.nifi.annotation.documentation.CapabilityDescription;
 import org.apache.nifi.annotation.documentation.Tags;
 import org.apache.nifi.components.PropertyDescriptor;
 import org.apache.nifi.flowfile.FlowFile;
+import org.apache.nifi.logging.ComponentLog;
 import org.apache.nifi.processor.AbstractProcessor;
 import org.apache.nifi.processor.ProcessContext;
 import org.apache.nifi.processor.ProcessSession;
@@ -195,10 +196,13 @@ public class ExtractHL7Attributes extends AbstractProcessor {
         final PipeParser parser = hapiContext.getPipeParser();
         final String hl7Text = new String(buffer, charset);
         try {
+            final ComponentLog logger = getLogger();
             final Message message = parser.parse(hl7Text);
             final Map<String, String> attributes = getAttributes(message, useSegmentNames, parseSegmentFields);
             flowFile = session.putAllAttributes(flowFile, attributes);
-            getLogger().debug("Added the following attributes for {}: {}", new Object[]{flowFile, attributes});
+            if (logger.isDebugEnabled()) {
+                logger.debug("Added the following attributes for {}: {}", new Object[]{flowFile, attributes});
+            }
         } catch (final HL7Exception e) {
             getLogger().error("Failed to extract attributes from {} due to {}", new Object[]{flowFile, e});
             session.transfer(flowFile, REL_FAILURE);
@@ -257,8 +261,8 @@ public class ExtractHL7Attributes extends AbstractProcessor {
                     } else if (structure instanceof Segment) {
                         addSegments((Segment) structure, segments, segmentIndexes);
                     }
+                    segmentIndexes.put(name, segmentIndexes.getOrDefault(name, 1) + 1);
                 }
-                segmentIndexes.put(name, segmentIndexes.getOrDefault(name, 1) + 1);
             }
         }
     }

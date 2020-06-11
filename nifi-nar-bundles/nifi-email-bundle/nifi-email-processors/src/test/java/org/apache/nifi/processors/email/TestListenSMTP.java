@@ -16,6 +16,7 @@
  */
 package org.apache.nifi.processors.email;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 import java.util.concurrent.CountDownLatch;
@@ -73,17 +74,17 @@ public class TestListenSMTP {
                     email.setMsg("MSG-" + i);
                     email.addTo("bob@nifi.apache.org");
                     email.send();
+                    latch.countDown();
                 } catch (Exception e) {
                     e.printStackTrace();
                     throw new RuntimeException(e);
-                } finally {
-                    latch.countDown();
                 }
             }
         }, 1500, TimeUnit.MILLISECONDS);
 
-        boolean complete = latch.await(5000, TimeUnit.MILLISECONDS);
+        boolean complete = latch.await(10000, TimeUnit.MILLISECONDS);
         runner.shutdown();
+        assertEquals(0, latch.getCount());
         assertTrue(complete);
         runner.assertAllFlowFilesTransferred(ListenSMTP.REL_SUCCESS, numMessages);
     }
@@ -136,17 +137,17 @@ public class TestListenSMTP {
                     email.setStartTLSRequired(true);
                     email.setSSLCheckServerIdentity(false);
                     email.send();
+                    latch.countDown();
                 } catch (Exception e) {
                     e.printStackTrace();
                     throw new RuntimeException(e);
-                } finally {
-                    latch.countDown();
                 }
             }
         }, 1500, TimeUnit.MILLISECONDS);
 
-        boolean complete = latch.await(5000, TimeUnit.MILLISECONDS);
+        boolean complete = latch.await(10000, TimeUnit.MILLISECONDS);
         runner.shutdown();
+        assertEquals(0, latch.getCount());
         assertTrue(complete);
         runner.assertAllFlowFilesTransferred("success", messageCount);
     }
@@ -187,8 +188,9 @@ public class TestListenSMTP {
             }
         }, 1000, TimeUnit.MILLISECONDS);
 
-        boolean complete = latch.await(5000, TimeUnit.MILLISECONDS);
+        boolean complete = latch.await(10000, TimeUnit.MILLISECONDS);
         runner.shutdown();
+        assertEquals(0, latch.getCount());
         assertTrue(complete);
         runner.assertAllFlowFilesTransferred("success", 0);
     }

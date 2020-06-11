@@ -17,30 +17,44 @@
 package org.apache.nifi.remote.io.socket;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.ServerSocket;
 
-/**
- *
- */
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class NetworkUtils {
+
+    private static final Logger logger = LoggerFactory.getLogger(NetworkUtils.class); 
 
     /**
      * Will determine the available port
      */
     public final static int availablePort() {
-        ServerSocket s = null;
-        try {
-            s = new ServerSocket(0);
-            s.setReuseAddress(true);
-            return s.getLocalPort();
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to discover available port.", e);
-        } finally {
-            try {
-                s.close();
-            } catch (IOException e) {
-                // ignore
+        return availablePort(5);
+    }
+
+    public final static int availablePort(final int numTries) {
+        return availablePort(numTries, "localhost");
+    }
+
+    public final static int availablePort(final int numTries, final String hostname) {
+        for (int i = numTries; i > 0; i--) {
+            try (final ServerSocket s = new ServerSocket(0, 1, InetAddress.getByName(hostname))) {
+                s.setReuseAddress(true);
+                if (s.isBound()) {
+                    int port = s.getLocalPort();
+                    if (logger.isDebugEnabled()) { 
+                        logger.debug("Found port available on {}", port); 
+                    }
+                    return s.getLocalPort();
+                }
+            } catch (final Exception ignore) {} finally {
+                try { Thread.sleep(10); } catch (final Exception ignore) {}
             }
         }
+
+        throw new IllegalStateException("Failed to discover available port.");
     }
+
 }

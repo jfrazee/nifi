@@ -18,11 +18,11 @@ package org.apache.nifi.processors.email;
 
 import static org.junit.Assert.assertTrue;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.mail.Email;
+import org.apache.commons.mail.EmailException;
 import org.apache.commons.mail.SimpleEmail;
 import org.apache.nifi.remote.io.socket.NetworkUtils;
 import org.apache.nifi.security.util.SslContextFactory;
@@ -31,23 +31,9 @@ import org.apache.nifi.ssl.StandardRestrictedSSLContextService;
 import org.apache.nifi.ssl.StandardSSLContextService;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
-import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 
 public class TestListenSMTP {
-
-    private ScheduledExecutorService executor;
-
-    @Before
-    public void before() {
-        this.executor = Executors.newScheduledThreadPool(2);
-    }
-
-    @After
-    public void after() {
-        this.executor.shutdown();
-    }
 
     @Test
     public void validateSuccessfulInteraction() throws Exception {
@@ -56,35 +42,38 @@ public class TestListenSMTP {
         TestRunner runner = TestRunners.newTestRunner(ListenSMTP.class);
         runner.setProperty(ListenSMTP.SMTP_PORT, String.valueOf(port));
         runner.setProperty(ListenSMTP.SMTP_MAXIMUM_CONNECTIONS, "3");
-
         runner.assertValid();
-        runner.run(5, false);
+
         final int numMessages = 5;
-        CountDownLatch latch = new CountDownLatch(numMessages);
 
-        this.executor.schedule(() -> {
-            for (int i = 0; i < numMessages; i++) {
-                try {
-                    Email email = new SimpleEmail();
-                    email.setHostName("localhost");
-                    email.setSmtpPort(port);
-                    email.setFrom("alice@nifi.apache.org");
-                    email.setSubject("This is a test");
-                    email.setMsg("MSG-" + i);
-                    email.addTo("bob@nifi.apache.org");
-                    email.send();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    throw new RuntimeException(e);
-                } finally {
-                    latch.countDown();
+        runner.run(numMessages, false);
+
+        assertTrue(String.format("expected server listening on %s:%d", "localhost", port), NetworkUtils.isListening("localhost", port, 5000));
+
+        final ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(() -> {
+                for (int i = 0; i < numMessages; i++) {
+                    try {
+                        Email email = new SimpleEmail();
+                        email.setHostName("localhost");
+                        email.setSmtpPort(port);
+                        email.setFrom("alice@nifi.apache.org");
+                        email.setSubject("This is a test");
+                        email.setMsg("MSG-" + i);
+                        email.addTo("bob@nifi.apache.org");
+                        email.send();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        throw new RuntimeException(e);
+                    }
                 }
-            }
-        }, 1500, TimeUnit.MILLISECONDS);
+            }).get(5000, TimeUnit.MILLISECONDS);
+        } finally {
+            try { executor.shutdown(); } catch (final Exception ignore) {}
+        }
 
-        boolean complete = latch.await(5000, TimeUnit.MILLISECONDS);
         runner.shutdown();
-        assertTrue(complete);
         runner.assertAllFlowFilesTransferred(ListenSMTP.REL_SUCCESS, numMessages);
     }
 
@@ -117,37 +106,40 @@ public class TestListenSMTP {
         runner.assertValid();
 
         int messageCount = 5;
-        CountDownLatch latch = new CountDownLatch(messageCount);
+
         runner.run(messageCount, false);
 
-        this.executor.schedule(() -> {
-            for (int i = 0; i < messageCount; i++) {
-                try {
-                    Email email = new SimpleEmail();
-                    email.setHostName("localhost");
-                    email.setSmtpPort(port);
-                    email.setFrom("alice@nifi.apache.org");
-                    email.setSubject("This is a test");
-                    email.setMsg("MSG-" + i);
-                    email.addTo("bob@nifi.apache.org");
+        assertTrue(String.format("expected server listening on %s:%d", "localhost", port), NetworkUtils.isListening("localhost", port, 5000));
 
-                    // Enable STARTTLS but ignore the cert
-                    email.setStartTLSEnabled(true);
-                    email.setStartTLSRequired(true);
-                    email.setSSLCheckServerIdentity(false);
-                    email.send();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                    throw new RuntimeException(e);
-                } finally {
-                    latch.countDown();
+        final ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(() -> {
+                for (int i = 0; i < messageCount; i++) {
+                    try {
+                        Email email = new SimpleEmail();
+                        email.setHostName("localhost");
+                        email.setSmtpPort(port);
+                        email.setFrom("alice@nifi.apache.org");
+                        email.setSubject("This is a test");
+                        email.setMsg("MSG-" + i);
+                        email.addTo("bob@nifi.apache.org");
+
+                        // Enable STARTTLS but ignore the cert
+                        email.setStartTLSEnabled(true);
+                        email.setStartTLSRequired(true);
+                        email.setSSLCheckServerIdentity(false);
+                        email.send();
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        throw new RuntimeException(e);
+                    }
                 }
-            }
-        }, 1500, TimeUnit.MILLISECONDS);
+            }).get(5000, TimeUnit.MILLISECONDS);
+        } finally {
+            try { executor.shutdown(); } catch (final Exception ignore) {}
+        }
 
-        boolean complete = latch.await(5000, TimeUnit.MILLISECONDS);
         runner.shutdown();
-        assertTrue(complete);
         runner.assertAllFlowFilesTransferred("success", messageCount);
     }
 
@@ -159,37 +151,38 @@ public class TestListenSMTP {
         runner.setProperty(ListenSMTP.SMTP_PORT, String.valueOf(port));
         runner.setProperty(ListenSMTP.SMTP_MAXIMUM_CONNECTIONS, "3");
         runner.setProperty(ListenSMTP.SMTP_MAXIMUM_MSG_SIZE, "10 B");
-
         runner.assertValid();
 
-        int messageCount = 1;
-        CountDownLatch latch = new CountDownLatch(messageCount);
+        runner.run(1, false);
 
-        runner.run(messageCount, false);
+        assertTrue(String.format("expected server listening on %s:%d", "localhost", port), NetworkUtils.isListening("localhost", port, 5000));
 
-        this.executor.schedule(() -> {
-            for (int i = 0; i < messageCount; i++) {
+        final ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            final Boolean failed = executor.submit(() -> {
                 try {
                     Email email = new SimpleEmail();
                     email.setHostName("localhost");
                     email.setSmtpPort(port);
                     email.setFrom("alice@nifi.apache.org");
                     email.setSubject("This is a test");
-                    email.setMsg("MSG-" + i);
+                    email.setMsg("MSG");
                     email.addTo("bob@nifi.apache.org");
                     email.send();
+                } catch (final EmailException expected) {
+                    return true;
                 } catch (Exception e) {
                     e.printStackTrace();
                     throw new RuntimeException(e);
-                } finally {
-                    latch.countDown();
                 }
-            }
-        }, 1000, TimeUnit.MILLISECONDS);
+                return false;
+            }).get(5000, TimeUnit.MILLISECONDS);
+            assertTrue(failed != null && failed);
+        } finally {
+            try { executor.shutdown(); } catch (final Exception ignore) {}
+        }
 
-        boolean complete = latch.await(5000, TimeUnit.MILLISECONDS);
         runner.shutdown();
-        assertTrue(complete);
         runner.assertAllFlowFilesTransferred("success", 0);
     }
 }

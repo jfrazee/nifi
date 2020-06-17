@@ -3,6 +3,7 @@ name: ci-workflow
 on: [push, pull_request]
 
 jobs:
+
   ubuntu-build-fr:
 
     timeout-minutes: 90
@@ -19,55 +20,24 @@ jobs:
           df -h
       - name: Checkout Code
         uses: actions/checkout@v2
-      - name: Check NPM Cache
-        uses: actions/cache@v1.1.2
+      - name: Restore ~/.npm
+        uses: actions/cache@v2
         with:
           path: ~/.npm
-          key: npm-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            npm-
-      - name: Check Maven Com Cache
-        uses: actions/cache@v1.1.2
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('.github/workflows/*.yml') }}
+      - name: Restore ~/.m2/repository
+        uses: actions/cache@v2
         with:
-          path: ~/.m2/repository/com
-          key: mvn-com-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-com-
-      - name: Check Maven Org Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/org
-          key: mvn-org-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-org-
-      - name: Check Maven Net Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/net
-          key: mvn-net-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-net-
-      - name: Check Maven IO Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/io
-          key: mvn-io-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-io-
-      - name: Check Maven BIZ Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/biz
-          key: mvn-biz-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-biz-
-      - name: Check Maven IT Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/it
-          key: mvn-it-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-it-
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/org/apache/nifi
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}-${{ hashFiles('.github/workflows/*.yml') }}
+      - name: Show ~/.m2/repository Usage
+        run: |
+          du -h -s ~/.m2/repository/* || true
+          du -h -s ~/.m2/repository/org/* || true
+          du -h -s ~/.m2/repository/org/apache/* || true
+          du -h -s ~/.m2/repository/org/apache/nifi/* || true
       - name: Set up JDK 1.8 FR
         uses: actions/setup-java@v1.3.0
         with:
@@ -80,10 +50,15 @@ jobs:
           MAVEN_OPTS: -Xmx2g -XX:ReservedCodeCacheSize=1g -XX:+UseG1GC -Dorg.slf4j.simpleLogger.defaultLogLevel=WARN -Dmaven.surefire.arguments="-Duser.language=fr -Duser.region=FR -Duser.timezone=Europe/Paris"
         run: |
           mvn -V -T 0.8C package -B -Pcontrib-check,include-grpc -Ddir-only -ntp -ff -pl -nifi-assembly,-nifi-toolkit/nifi-toolkit-assembly,-nifi-system-tests -nsu
+      - name: Show ~/.m2/repository Usage
+        run: |
+          du -h -s ~/.m2/repository/* || true
+          du -h -s ~/.m2/repository/org/* || true
+          du -h -s ~/.m2/repository/org/apache/* || true
+          du -h -s ~/.m2/repository/org/apache/nifi/* || true
       - name: Disk After Build
         run: |
           df -h
-
 
   ubuntu-build-en:
 
@@ -101,55 +76,18 @@ jobs:
           df -h
       - name: Checkout Code
         uses: actions/checkout@v2
-      - name: Check NPM Cache
-        uses: actions/cache@v1.1.2
+      - name: Restore ~/.npm
+        uses: actions/cache@v2
         with:
           path: ~/.npm
-          key: npm-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            npm-
-      - name: Check Maven Com Cache
-        uses: actions/cache@v1.1.2
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('.github/workflows/*.yml') }}
+      - name: Restore ~/.m2/repository
+        uses: actions/cache@v2
         with:
-          path: ~/.m2/repository/com
-          key: mvn-com-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-com-
-      - name: Check Maven Org Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/org
-          key: mvn-org-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-org-
-      - name: Check Maven Net Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/net
-          key: mvn-net-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-net-
-      - name: Check Maven IO Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/io
-          key: mvn-io-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-io-
-      - name: Check Maven BIZ Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/biz
-          key: mvn-biz-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-biz-
-      - name: Check Maven IT Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/it
-          key: mvn-it-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-it-
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/org/apache/nifi
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}-${{ hashFiles('.github/workflows/*.yml') }}
       - name: Set up JDK 11 EN
         uses: actions/setup-java@v1.3.0
         with:
@@ -178,55 +116,18 @@ jobs:
           df -h
       - name: Checkout Code
         uses: actions/checkout@v2
-      - name: Check NPM Cache
-        uses: actions/cache@v1.1.2
+      - name: Restore ~/.npm
+        uses: actions/cache@v2
         with:
           path: ~/.npm
-          key: npm-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            npm-
-      - name: Check Maven Com Cache
-        uses: actions/cache@v1.1.2
+          key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}-${{ hashFiles('.github/workflows/*.yml') }}
+      - name: Restore ~/.m2/repository
+        uses: actions/cache@v2
         with:
-          path: ~/.m2/repository/com
-          key: mvn-com-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-com-
-      - name: Check Maven Org Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/org
-          key: mvn-org-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-org-
-      - name: Check Maven Net Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/net
-          key: mvn-net-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-net-
-      - name: Check Maven IO Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/io
-          key: mvn-io-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-io-
-      - name: Check Maven BIZ Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/biz
-          key: mvn-biz-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-biz-
-      - name: Check Maven IT Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~/.m2/repository/it
-          key: mvn-it-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            mvn-it-
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/org/apache/nifi
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}-${{ hashFiles('.github/workflows/*.yml') }}
       - name: Set up JDK 1.8 JP
         uses: actions/setup-java@v1.3.0
         with:
@@ -255,48 +156,13 @@ jobs:
           git config --global core.longpaths true
       - name: Checkout Code
         uses: actions/checkout@v2
-      - name: Check Maven Com Cache
-        uses: actions/cache@v1.1.2
+      - name: Restore ~\.m2\repository
+        uses: actions/cache@v2
         with:
-          path: ~\.m2\repository\com
-          key: win-mvn-com-${{ hashFiles('**\pom.xml') }}
-          restore-keys: |
-            win-mvn-com-
-      - name: Check Maven Org Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~\.m2\repository\org
-          key: win-mvn-org-${{ hashFiles('**\pom.xml') }}
-          restore-keys: |
-            win-mvn-org-
-      - name: Check Maven Net Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~\.m2\repository\net
-          key: win-mvn-net-${{ hashFiles('**\pom.xml') }}
-          restore-keys: |
-            win-mvn-net-
-      - name: Check Maven IO Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~\.m2\repository\io
-          key: win-mvn-io-${{ hashFiles('**\pom.xml') }}
-          restore-keys: |
-            win-mvn-io-
-      - name: Check Maven BIZ Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~\.m2\repository\biz
-          key: win-mvn-biz-${{ hashFiles('**\pom.xml') }}
-          restore-keys: |
-            win-mvn-biz-
-      - name: Check Maven IT Cache
-        uses: actions/cache@v1.1.2
-        with:
-          path: ~\.m2\repository\it
-          key: win-mvn-it-${{ hashFiles('**\pom.xml') }}
-          restore-keys: |
-            win-mvn-it-
+          path: |
+            ~\.m2\repository
+            !~\.m2\repository\org\apache\nifi
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}-${{ hashFiles('.github/workflows/*.yml') }}
       - name: Set up JDK 1.8
         uses: actions/setup-java@v1.3.0
         with:

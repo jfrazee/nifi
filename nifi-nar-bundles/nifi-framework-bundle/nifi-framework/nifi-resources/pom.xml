@@ -125,6 +125,10 @@
         <nifi.components.status.repository.buffer.size>1440</nifi.components.status.repository.buffer.size>
         <nifi.components.status.snapshot.frequency>1 min</nifi.components.status.snapshot.frequency>
 
+        <!-- parameter context properties -->
+        <nifi.parameter.context.implementation />
+        <nifi.parameter.context.manager.implementation />
+
         <!-- nifi.properties: web properties -->
         <nifi.web.http.host />
         <nifi.web.http.port>8080</nifi.web.http.port>

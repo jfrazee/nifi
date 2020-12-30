@@ -140,6 +140,10 @@ public abstract class NiFiProperties {
     public static final String COMPONENT_STATUS_REPOSITORY_IMPLEMENTATION = "nifi.components.status.repository.implementation";
     public static final String COMPONENT_STATUS_SNAPSHOT_FREQUENCY = "nifi.components.status.snapshot.frequency";
 
+    // parameter context properties
+    public static final String PARAMETER_CONTEXT_IMPLEMENTATION = "nifi.parameter.context.implementation";
+    public static final String PARAMETER_CONTEXT_MANAGER_IMPLEMENTATION = "nifi.parameter.context.manager.implementation";
+
     // security properties
     public static final String SECURITY_KEYSTORE = "nifi.security.keystore";
     public static final String SECURITY_KEYSTORE_TYPE = "nifi.security.keystoreType";

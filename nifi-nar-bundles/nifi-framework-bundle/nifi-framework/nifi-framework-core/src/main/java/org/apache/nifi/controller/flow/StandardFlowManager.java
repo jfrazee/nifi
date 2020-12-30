@@ -63,6 +63,9 @@ import org.apache.nifi.logging.ProcessorLogObserver;
 import org.apache.nifi.logging.ReportingTaskLogObserver;
 import org.apache.nifi.nar.ExtensionManager;
 import org.apache.nifi.nar.NarCloseable;
+import org.apache.nifi.nar.NarThreadContextClassLoader;
+import org.apache.nifi.parameter.Parameter;
+import org.apache.nifi.parameter.ParameterContext;
 import org.apache.nifi.parameter.ParameterContextManager;
 import org.apache.nifi.registry.VariableRegistry;
 import org.apache.nifi.registry.variable.MutableVariableRegistry;
@@ -74,10 +77,12 @@ import org.apache.nifi.reporting.BulletinRepository;
 import org.apache.nifi.util.FormatUtils;
 import org.apache.nifi.util.NiFiProperties;
 import org.apache.nifi.util.ReflectionUtils;
+import org.apache.nifi.util.StringUtils;
 import org.apache.nifi.web.api.dto.FlowSnippetDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.reflect.Method;
 import javax.net.ssl.SSLContext;
 import java.net.URL;
 import java.util.Collection;
@@ -527,9 +532,86 @@ public class StandardFlowManager extends AbstractFlowManager implements FlowMana
     }
 
     @Override
+    public ParameterContext createParameterContext(final String id, final String name, final Map<String, Parameter> parameters) {
+        requireNonNull(this.nifiProperties);
+
+        final String implementationClassName = nifiProperties.getProperty(NiFiProperties.PARAMETER_CONTEXT_IMPLEMENTATION);
+        if (StringUtils.isBlank(implementationClassName)) {
+            if (logger.isDebugEnabled()) {
+                logger.debug("Using default parameter context implementation");
+            }
+            return super.createParameterContext(id, name, parameters);
+        } else {
+            // TODO: Extract this out to something like "createParameterContext(className...)"
+            // TODO: Should it just be overloaded on AbstractFlowManager?
+
+            if (logger.isDebugEnabled()) {
+                logger.debug("Using {} parameter context implementation",
+                    implementationClassName.substring(implementationClassName.lastIndexOf(".")+1));
+            }
+
+            // TODO: Add name check; for example:
+            //     final boolean namingConflict = parameterContextManager.getParameterContexts().stream()
+            //         .anyMatch(paramContext -> paramContext.getName().equals(name));
+
+            try {
+                final ParameterContext parameterContext = NarThreadContextClassLoader.createInstance(
+                    getExtensionManager(),
+                    implementationClassName,
+                    ParameterContext.class,
+                    nifiProperties
+                );
+
+                // This should probably really be a default no-op method on the
+                // ParameterContext interface or maybe there should be another
+                // "LoadableParameterContext" interface that has such a method.
+                // As is, StandardParameterContext sets this via the constructor
+                // and the interface already exists so the contract is fixed.
+                final Class parameterContextClass = parameterContext.getClass();
+                final String parameterContextSimpleName = parameterContextClass.getSimpleName();
+                try {
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("Checking to see whether {} parameter context has setIdentifier() method", parameterContextSimpleName);
+                    }
+
+                    final Method method = parameterContextClass.getMethod("setIdentifier", String.class);
+
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("Invoking setIdentifier() on {} parameter context instance", parameterContextSimpleName);
+                    }
+
+                    method.invoke(parameterContext, id);
+
+                    if (logger.isDebugEnabled()) {
+                        logger.debug("Invoked setIdentifier() on {} parameter context instance with id: {}", parameterContextSimpleName, id);
+                    }
+                } catch (final NoSuchMethodException ignore) {
+                    if (logger.isDebugEnabled()) {
+                        logger.warn("Couldn't invoke setIdentifier(): {} parameter context doesn't have setIdentifier() method", parameterContextSimpleName);
+                    }
+                }
+
+                parameterContext.setName(name);
+
+                try {
+                    parameterContext.verifyCanSetParameters(parameters);
+                    parameterContext.setParameters(parameters);
+                } catch (final IllegalStateException e) {
+                    if (logger.isDebugEnabled()) {
+                        logger.warn("Couldn't set parameters for {} parameter context: {}", parameterContextSimpleName, e.getMessage());
+                    }
+                }
+
+                return parameterContext;
+            } catch (final Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    @Override
     protected Authorizable getParameterContextParent() {
         return flowController;
     }
-
 
 }

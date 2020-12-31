@@ -142,7 +142,6 @@ public abstract class NiFiProperties {
 
     // parameter context properties
     public static final String PARAMETER_CONTEXT_IMPLEMENTATION = "nifi.parameter.context.implementation";
-    public static final String PARAMETER_CONTEXT_MANAGER_IMPLEMENTATION = "nifi.parameter.context.manager.implementation";
 
     // security properties
     public static final String SECURITY_KEYSTORE = "nifi.security.keystore";

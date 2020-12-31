@@ -127,7 +127,6 @@
 
         <!-- parameter context properties -->
         <nifi.parameter.context.implementation />
-        <nifi.parameter.context.manager.implementation />
 
         <!-- nifi.properties: web properties -->
         <nifi.web.http.host />

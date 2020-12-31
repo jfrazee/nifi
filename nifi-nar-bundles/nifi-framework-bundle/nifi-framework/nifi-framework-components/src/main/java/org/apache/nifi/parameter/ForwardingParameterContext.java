@@ -20,7 +20,6 @@ import org.apache.nifi.authorization.Resource;
 import org.apache.nifi.authorization.resource.Authorizable;
 
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 
 // TODO: Override the interface default methods from Authorizable

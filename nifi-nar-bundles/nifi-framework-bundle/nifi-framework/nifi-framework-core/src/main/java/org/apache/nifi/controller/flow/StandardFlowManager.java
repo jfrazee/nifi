@@ -85,7 +85,6 @@ import org.apache.nifi.web.api.dto.FlowSnippetDTO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Method;
 import javax.net.ssl.SSLContext;
 import java.net.URL;
 import java.util.Collection;
@@ -559,7 +558,8 @@ public class StandardFlowManager extends AbstractFlowManager implements FlowMana
             .filter(c -> c.getName().equals(name))
             .findAny()
             .ifPresent(n -> {
-                throw new IllegalStateException(String.format("Cannot create %s Parameter Context with name '%s' because a Parameter Context already exists with that name", implementationClassName, n));
+                throw new IllegalStateException(String.format("Cannot create %s Parameter Context with name '%s' because a Parameter Context already exists with that name",
+                    implementationClassName, n));
             });
 
         ParameterContext loadedParameterContext;
